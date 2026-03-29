@@ -26,6 +26,7 @@ export class HybridRetrieverService {
 
   async retrieve(query: string, _filters?: RetrievalFilters): Promise<RetrievedChunk[]> {
     const keywords = this.extractKeywords(query);
+    this.logger.log(`Extracted keywords: [${keywords.join(', ')}]`);
 
     const queryVector = await this.indexingApi.embedText(query);
     const vectorLiteral = this.indexingApi.toVectorLiteral(queryVector);
@@ -65,7 +66,9 @@ export class HybridRetrieverService {
         `Hybrid retrieve: ${vectorRows.length} vector + ${keywordRows.length} keyword hits → ${result.length} final. Similarities: [${scores}]`,
       );
     } else {
-      this.logger.warn('No chunks found — embeddings table may be empty');
+      this.logger.warn(
+        `No chunks found — vectorRows=${vectorRows.length}, keywordRows=${keywordRows.length}. Keywords used: [${keywords.join(', ')}]. Embeddings table may be empty or document not indexed.`,
+      );
     }
 
     return result;

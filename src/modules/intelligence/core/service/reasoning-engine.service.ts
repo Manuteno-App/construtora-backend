@@ -9,6 +9,12 @@ import { ConversationRole } from '../../persistence/entity/conversation-turn.ent
 
 const NOT_FOUND_MESSAGE = 'Não encontrei informações sobre isso nos documentos indexados.';
 
+// gpt-4 has an 8192-token context window.
+// Portuguese text tokenizes at ~3 chars/token (less efficient than English).
+// Budget: 8192 total - ~300 (system prompt) - ~200 (query + formatting) - 800 (response) ≈ 6892 usable tokens.
+// 6892 * 3 chars/token = ~20676 chars, use 14000 to stay safely within limits.
+const MAX_CONTEXT_CHARS = 14000;
+
 const SYSTEM_PROMPT = `Você é um assistente especializado em atestados de execução de obras.
 Responda SOMENTE com base nos trechos de documentos fornecidos abaixo.
 Se a informação solicitada não estiver presente nos trechos, responda exatamente: "${NOT_FOUND_MESSAGE}"
@@ -145,6 +151,14 @@ export class ReasoningEngineService {
 
     const maxSimilarity = chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
     if (maxSimilarity < this.similarityThreshold) {
+      if (chunks.length === 0) {
+        this.logger.warn(`NotFound: retriever returned 0 chunks for query: "${dto.query}"`);
+      } else {
+        this.logger.warn(
+          `NotFound: ${chunks.length} chunks found but maxSimilarity=${maxSimilarity.toFixed(3)} < threshold=${this.similarityThreshold}. ` +
+          `Top chunks: ${chunks.slice(0, 3).map((c) => `"${c.originalFilename}" p.${c.pageNumber} sim=${Number(c.similarity).toFixed(3)}`).join(' | ')}`,
+        );
+      }
       return { notFound: true, chunks: [], sources: [], context: '' };
     }
 
@@ -176,7 +190,17 @@ export class ReasoningEngineService {
       trecho: c.content.slice(0, 200),
     }));
 
-    return { notFound: false, chunks, sources, context: contextParts.join('\n\n') };
+    const context = this.truncateContext(contextParts.join('\n\n'));
+
+    return { notFound: false, chunks, sources, context };
+  }
+
+  private truncateContext(text: string): string {
+    if (text.length <= MAX_CONTEXT_CHARS) return text;
+    this.logger.warn(
+      `Context truncated from ${text.length} to ${MAX_CONTEXT_CHARS} chars to stay within model token limit`,
+    );
+    return text.slice(0, MAX_CONTEXT_CHARS) + '\n\n[... conteúdo truncado por limite de contexto ...]';
   }
 
   private detectIntent(query: string): QueryIntent {
