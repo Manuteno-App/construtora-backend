@@ -1,5 +1,7 @@
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { DomainException } from '../exception/domain.exception';
+import { NotFoundDomainException } from '../exception/not-found-domain.exception';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -10,15 +12,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+    let status: number;
+    let message: unknown;
 
-    const message =
-      exception instanceof HttpException
-        ? exception.getResponse()
-        : 'Internal server error';
+    if (exception instanceof HttpException) {
+      status = exception.getStatus();
+      message = exception.getResponse();
+    } else if (exception instanceof NotFoundDomainException) {
+      status = HttpStatus.NOT_FOUND;
+      message = exception.message;
+    } else if (exception instanceof DomainException) {
+      status = HttpStatus.UNPROCESSABLE_ENTITY;
+      message = exception.message;
+    } else {
+      status = HttpStatus.INTERNAL_SERVER_ERROR;
+      message = 'Internal server error';
+    }
 
     if (status >= 500) {
       this.logger.error(exception);

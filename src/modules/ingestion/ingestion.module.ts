@@ -1,25 +1,41 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
-import { Atestado } from '../database/entities/atestado.entity';
-import { Chunk } from '../database/entities/chunk.entity';
-import { Embedding } from '../database/entities/embedding.entity';
-import { IngestionController } from './ingestion.controller';
-import { IngestionProcessor } from './processors/ingestion.processor';
-import { OcrService } from './services/ocr.service';
-import { TableExtractorService } from './services/table-extractor.service';
-import { VisionService } from './services/vision.service';
-import { StorageModule } from '../storage/storage.module';
-import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../queue/queue.module';
+import { Chunk } from './persistence/entity/chunk.entity';
+import { ChunkRepository } from './persistence/repository/chunk.repository';
+import { IngestionService } from './core/service/ingestion.service';
+import { OcrService } from './core/service/ocr.service';
+import { TableExtractorService } from './core/service/table-extractor.service';
+import { VisionService } from './core/service/vision.service';
+import { IngestionFacade } from './public-api/facade/ingestion.facade';
+import { INGESTION_API } from './public-api/interface/ingestion-api.interface';
+import { IngestionProcessor } from './processor/ingestion.processor';
+import { IngestionController } from './http/rest/controller/ingestion.controller';
+import { DocumentsModule } from '../documents/documents.module';
+import { StorageModule } from '../infrastructure/storage/storage.module';
+import { INGESTION_QUEUE, EXTRACTION_QUEUE } from '../infrastructure/queue/queue.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Atestado, Chunk, Embedding]),
+    TypeOrmModule.forFeature([Chunk]),
     BullModule.registerQueue({ name: INGESTION_QUEUE }, { name: EXTRACTION_QUEUE }),
     StorageModule,
+    DocumentsModule,
+  ],
+  providers: [
+    ChunkRepository,
+    OcrService,
+    TableExtractorService,
+    VisionService,
+    IngestionService,
+    IngestionFacade,
+    { provide: INGESTION_API, useExisting: IngestionFacade },
+    IngestionProcessor,
   ],
   controllers: [IngestionController],
-  providers: [IngestionProcessor, OcrService, TableExtractorService, VisionService],
-  exports: [OcrService, TableExtractorService, VisionService],
+  exports: [
+    IngestionFacade,
+    { provide: INGESTION_API, useExisting: IngestionFacade },
+  ],
 })
 export class IngestionModule {}

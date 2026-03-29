@@ -1,21 +1,24 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Chunk } from '../database/entities/chunk.entity';
-import { Embedding } from '../database/entities/embedding.entity';
-import { ServicoExecutado } from '../database/entities/servico-executado.entity';
-import { ConversationTurn } from '../database/entities/conversation-turn.entity';
-import { HybridRetrieverService } from './services/hybrid-retriever.service';
-import { ReasoningEngineService } from './services/reasoning-engine.service';
-import { QuantitativoQueryService } from './services/quantitativo-query.service';
-import { IntelligenceController } from './intelligence.controller';
+import { ConversationTurn } from './persistence/entity/conversation-turn.entity';
+import { ConversationTurnRepository } from './persistence/repository/conversation-turn.repository';
+import { HybridRetrieverService } from './core/service/hybrid-retriever.service';
+import { ReasoningEngineService } from './core/service/reasoning-engine.service';
+import { IntelligenceController } from './http/rest/controller/intelligence.controller';
+import { ExtractionModule } from '../extraction/extraction.module';
 import { IndexingModule } from '../indexing/indexing.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Chunk, Embedding, ServicoExecutado, ConversationTurn]),
+    TypeOrmModule.forFeature([ConversationTurn]),
+    ExtractionModule,
     IndexingModule,
   ],
+  providers: [
+    ConversationTurnRepository,
+    HybridRetrieverService,
+    ReasoningEngineService,
+  ],
   controllers: [IntelligenceController],
-  providers: [HybridRetrieverService, ReasoningEngineService, QuantitativoQueryService],
 })
 export class IntelligenceModule {}
