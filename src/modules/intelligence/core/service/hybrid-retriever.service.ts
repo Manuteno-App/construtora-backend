@@ -1,7 +1,7 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IIndexingApi, INDEXING_API } from '../../../indexing/public-api/interface/indexing-api.interface';
 import type { RetrievedChunk } from '../../../indexing/persistence/repository/embedding.repository';
+import { IIndexingApi, INDEXING_API } from '../../../indexing/public-api/interface/indexing-api.interface';
 
 export { RetrievedChunk };
 

@@ -1,11 +1,11 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import OpenAI from 'openai';
-import { HybridRetrieverService, RetrievedChunk, RetrievalFilters } from './hybrid-retriever.service';
-import { IExtractionApi, EXTRACTION_API } from '../../../extraction/public-api/interface/extraction-api.interface';
-import { ConversationTurnRepository } from '../../persistence/repository/conversation-turn.repository';
+import { EXTRACTION_API, IExtractionApi } from '../../../extraction/public-api/interface/extraction-api.interface';
 import { ConversationRole } from '../../persistence/entity/conversation-turn.entity';
+import { ConversationTurnRepository } from '../../persistence/repository/conversation-turn.repository';
+import { HybridRetrieverService, RetrievalFilters, RetrievedChunk } from './hybrid-retriever.service';
 
 const NOT_FOUND_MESSAGE = 'Não encontrei informações sobre isso nos documentos indexados.';
 
