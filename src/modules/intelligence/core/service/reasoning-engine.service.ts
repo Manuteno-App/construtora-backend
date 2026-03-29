@@ -9,11 +9,10 @@ import { HybridRetrieverService, RetrievalFilters, RetrievedChunk } from './hybr
 
 const NOT_FOUND_MESSAGE = 'Não encontrei informações sobre isso nos documentos indexados.';
 
-// gpt-4 has an 8192-token context window.
-// Portuguese text tokenizes at ~3 chars/token (less efficient than English).
-// Budget: 8192 total - ~300 (system prompt) - ~200 (query + formatting) - 800 (response) ≈ 6892 usable tokens.
-// 6892 * 3 chars/token = ~20676 chars, use 14000 to stay safely within limits.
-const MAX_CONTEXT_CHARS = 14000;
+// gpt-4o-mini has a 128k-token context window.
+// Portuguese text tokenizes at ~3 chars/token.
+// Budget: 120000 usable tokens * 3 chars/token = 360000 chars — using 80000 to leave ample room for system prompt, query and response.
+const MAX_CONTEXT_CHARS = 80000;
 
 const SYSTEM_PROMPT = `Você é um assistente especializado em atestados de execução de obras.
 Responda SOMENTE com base nos trechos de documentos fornecidos abaixo.
@@ -50,6 +49,7 @@ export class ReasoningEngineService {
   private readonly logger = new Logger(ReasoningEngineService.name);
   private readonly openai: OpenAI;
   private readonly similarityThreshold: number;
+  private readonly chatModel: string;
 
   constructor(
     private readonly retriever: HybridRetrieverService,
@@ -59,6 +59,7 @@ export class ReasoningEngineService {
   ) {
     this.openai = new OpenAI({ apiKey: config.get<string>('openaiApiKey') });
     this.similarityThreshold = config.get<number>('rag.similarityThreshold') ?? 0.35;
+    this.chatModel = config.get<string>('chatModel') ?? 'gpt-4o-mini';
   }
 
   async streamAnswer(dto: QueryDto, res: Response): Promise<void> {
@@ -82,7 +83,7 @@ export class ReasoningEngineService {
       }
 
       const stream = await this.openai.chat.completions.create({
-        model: 'gpt-4',
+        model: this.chatModel,
         stream: true,
         temperature: 0.1,
         messages: [
@@ -125,7 +126,7 @@ export class ReasoningEngineService {
     }
 
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-4',
+      model: this.chatModel,
       stream: false,
       temperature: 0.1,
       messages: [

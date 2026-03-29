@@ -15,6 +15,7 @@ export const configurationSchema = Joi.object({
   AWS_S3_BUCKET: Joi.string().required(),
 
   OPENAI_API_KEY: Joi.string().required(),
+  CHAT_MODEL: Joi.string().default('gpt-4o-mini'),
 
   EMBEDDING_MODEL: Joi.string().default('text-embedding-3-small'),
   EMBEDDING_DIMENSIONS: Joi.number().default(1536),
@@ -42,6 +43,7 @@ export const configuration = () => ({
   },
 
   openaiApiKey: process.env.OPENAI_API_KEY,
+  chatModel: process.env.CHAT_MODEL ?? 'gpt-4o-mini',
 
   embedding: {
     model: process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
