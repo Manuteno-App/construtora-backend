@@ -1,6 +1,6 @@
-import { Module, Global } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
 @Global()
 @Module({
@@ -16,6 +16,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         migrations: ['dist/migrations/*.js'],
         migrationsRun: false,
         logging: config.get<string>('nodeEnv') === 'development',
+        ssl: config.get<string>('nodeEnv') === 'production' ? { rejectUnauthorized: false } : false,
       }),
     }),
   ],
