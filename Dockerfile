@@ -21,6 +21,7 @@ COPY --from=builder /app/dist ./dist
 
 # Files required for `npm run migration:run` inside the running container
 COPY --from=builder /app/data-source.ts ./data-source.ts
+COPY --from=builder /app/src ./src
 COPY --from=builder /app/src/migrations ./src/migrations
 COPY package*.json tsconfig.json tsconfig.build.json ./
 
