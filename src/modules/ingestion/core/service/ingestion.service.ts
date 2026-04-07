@@ -34,6 +34,18 @@ export class IngestionService {
     return { atestadoId: atestado.id, status: atestado.status };
   }
 
+  async uploadManyAndEnqueue(
+    files: Express.Multer.File[],
+  ): Promise<{ results: Array<{ atestadoId: string; status: AtestadoStatus; originalFilename: string }> }> {
+    const results = await Promise.all(files.map((file) => this.uploadAndEnqueue(file)));
+    return {
+      results: results.map((r, i) => ({
+        ...r,
+        originalFilename: files[i].originalname,
+      })),
+    };
+  }
+
   async reindex(id: string): Promise<{ atestadoId: string; originalFilename: string; status: AtestadoStatus }> {
     const atestado = await this.documentService.findById(id);
 

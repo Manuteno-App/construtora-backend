@@ -3,17 +3,18 @@ import {
   Post,
   Get,
   Param,
-  UploadedFile,
+  UploadedFiles,
   UseInterceptors,
   BadRequestException,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { ApiTags, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { IngestionService } from '../../../core/service/ingestion.service';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const MAX_FILES = 20;
 
 @ApiTags('ingestion')
 @Controller('ingestion')
@@ -21,16 +22,21 @@ export class IngestionController {
   constructor(private readonly ingestionService: IngestionService) {}
 
   @Post('upload')
-  @ApiOperation({ summary: 'Upload de atestado PDF para ingestão' })
+  @ApiOperation({ summary: 'Upload de um ou mais atestados PDF para ingestão' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      properties: { file: { type: 'string', format: 'binary' } },
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
+      },
     },
   })
   @UseInterceptors(
-    FileInterceptor('file', {
+    FilesInterceptor('files', MAX_FILES, {
       storage: memoryStorage(),
       limits: { fileSize: MAX_FILE_SIZE },
       fileFilter: (_req, file, cb) => {
@@ -41,9 +47,9 @@ export class IngestionController {
       },
     }),
   )
-  upload(@UploadedFile() file: Express.Multer.File) {
-    if (!file) throw new BadRequestException('Arquivo PDF obrigatório');
-    return this.ingestionService.uploadAndEnqueue(file);
+  upload(@UploadedFiles() files: Express.Multer.File[]) {
+    if (!files || files.length === 0) throw new BadRequestException('Ao menos um arquivo PDF é obrigatório');
+    return this.ingestionService.uploadManyAndEnqueue(files);
   }
 
   @Post(':id/reindex')
