@@ -40,6 +40,13 @@ export class AtestadosController {
     return this.documentService.findByIdWithRelations(id);
   }
 
+  @Get(':id/signed-url')
+  @ApiOperation({ summary: 'Retorna URL temporária (presigned) para download do PDF no S3' })
+  async signedUrl(@Param('id', ParseUUIDPipe) id: string) {
+    const url = await this.documentService.getSignedDownloadUrl(id);
+    return { url };
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Remove atestado, chunks, embeddings e arquivo S3' })

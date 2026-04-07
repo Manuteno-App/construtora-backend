@@ -50,6 +50,12 @@ export class DocumentService {
     await this.atestadoRepo.updateStatus(id, status, errorMessage);
   }
 
+  async getSignedDownloadUrl(id: string): Promise<string> {
+    const atestado = await this.atestadoRepo.findById(id);
+    if (!atestado) throw new NotFoundDomainException('Atestado', id);
+    return this.storage.getSignedUrl(atestado.s3Key);
+  }
+
   async delete(id: string): Promise<void> {
     const atestado = await this.atestadoRepo.findById(id);
     if (!atestado) throw new NotFoundDomainException('Atestado', id);
