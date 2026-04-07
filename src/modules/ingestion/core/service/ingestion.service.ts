@@ -1,12 +1,11 @@
-import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { v4 as uuidv4 } from 'uuid';
-import { NotFoundDomainException } from '../../../../common/exception/not-found-domain.exception';
-import { StorageService } from '../../../infrastructure/storage/storage.service';
-import { INGESTION_QUEUE } from '../../../infrastructure/queue/queue.module';
 import { DocumentService } from '../../../documents/core/service/document.service';
 import { AtestadoStatus } from '../../../documents/persistence/entity/atestado.entity';
+import { INGESTION_QUEUE } from '../../../infrastructure/queue/queue.module';
+import { StorageService } from '../../../infrastructure/storage/storage.service';
 import { ChunkRepository } from '../../persistence/repository/chunk.repository';
 
 @Injectable()

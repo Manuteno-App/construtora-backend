@@ -1,16 +1,16 @@
 import {
+  BadRequestException,
   Controller,
-  Post,
   Get,
   Param,
+  ParseUUIDPipe,
+  Post,
   UploadedFiles,
   UseInterceptors,
-  BadRequestException,
-  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
-import { ApiTags, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { IngestionService } from '../../../core/service/ingestion.service';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
