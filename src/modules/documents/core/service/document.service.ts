@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { NotFoundDomainException } from '../../../../common/exception/not-found-domain.exception';
-import { AtestadoRepository } from '../../persistence/repository/atestado.repository';
-import { Atestado, AtestadoStatus } from '../../persistence/entity/atestado.entity';
 import { StorageService } from '../../../infrastructure/storage/storage.service';
+import { Atestado, AtestadoStatus } from '../../persistence/entity/atestado.entity';
+import { AtestadoRepository } from '../../persistence/repository/atestado.repository';
 
 export interface ListAtestadosParams {
   status?: AtestadoStatus;

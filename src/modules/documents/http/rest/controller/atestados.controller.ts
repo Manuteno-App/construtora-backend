@@ -1,14 +1,14 @@
 import {
   Controller,
-  Get,
   Delete,
-  Param,
-  Query,
-  ParseUUIDPipe,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { DocumentService } from '../../../core/service/document.service';
 import { AtestadoStatus } from '../../../persistence/entity/atestado.entity';
 
