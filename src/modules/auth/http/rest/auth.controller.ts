@@ -1,24 +1,24 @@
 import {
-  Body,
-  ConflictException,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Post,
-  Req,
-  Res,
-  UseGuards,
+    Body,
+    ConflictException,
+    Controller,
+    Get,
+    HttpCode,
+    HttpStatus,
+    Post,
+    Req,
+    Res,
+    UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
-import { AuthService } from '../../core/service/auth.service';
-import { CreateUserDto } from './dto/create-user.dto';
-import { LoginDto } from './dto/login.dto';
 import { Public } from '../../../../common/decorators/public.decorator';
+import { AuthService } from '../../core/service/auth.service';
 import { UserEntity } from '../../persistence/entity/user.entity';
 import { AuthenticatedUser } from '../../public-api/interface/auth.interface';
+import { CreateUserDto } from './dto/create-user.dto';
+import { LoginDto } from './dto/login.dto';
 
 const REFRESH_TOKEN_COOKIE = 'refresh_token';
 const COOKIE_OPTIONS = {
