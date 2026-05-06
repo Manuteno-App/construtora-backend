@@ -1,5 +1,6 @@
 import {
   Body,
+  ConflictException,
   Controller,
   Get,
   HttpCode,
@@ -13,6 +14,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { AuthService } from '../../core/service/auth.service';
+import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { Public } from '../../../../common/decorators/public.decorator';
 import { UserEntity } from '../../persistence/entity/user.entity';
@@ -75,5 +77,21 @@ export class AuthController {
   @ApiOperation({ summary: 'Retornar dados do usuário autenticado' })
   me(@Req() req: Request & { user: AuthenticatedUser }): AuthenticatedUser {
     return req.user;
+  }
+
+  @Post('users')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBody({ type: CreateUserDto })
+  @ApiOperation({ summary: 'Criar novo usuário (requer autenticação)' })
+  async createUser(@Body() dto: CreateUserDto): Promise<AuthenticatedUser> {
+    try {
+      return await this.authService.createUser(dto.email, dto.name, dto.password);
+    } catch (err: unknown) {
+      const pg = err as { code?: string };
+      if (pg?.code === '23505') {
+        throw new ConflictException('E-mail já cadastrado');
+      }
+      throw err;
+    }
   }
 }
