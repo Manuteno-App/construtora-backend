@@ -79,10 +79,11 @@ export class AuthController {
     return req.user;
   }
 
+  @Public()
   @Post('users')
   @HttpCode(HttpStatus.CREATED)
   @ApiBody({ type: CreateUserDto })
-  @ApiOperation({ summary: 'Criar novo usuário (requer autenticação)' })
+  @ApiOperation({ summary: 'Criar novo usuário' })
   async createUser(@Body() dto: CreateUserDto): Promise<AuthenticatedUser> {
     try {
       return await this.authService.createUser(dto.email, dto.name, dto.password);
