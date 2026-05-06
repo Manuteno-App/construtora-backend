@@ -9,6 +9,7 @@ import type { ServicoItem } from '../../../ingestion/core/service/table-extracto
 export class ExtractionService {
   private readonly logger = new Logger(ExtractionService.name);
   private readonly openai: OpenAI;
+  private readonly extractionModel: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -16,6 +17,7 @@ export class ExtractionService {
     @Inject(INGESTION_API) private readonly ingestionApi: IIngestionApi,
   ) {
     this.openai = new OpenAI({ apiKey: config.get<string>('openaiApiKey') });
+    this.extractionModel = config.get<string>('extractionModel') ?? 'gpt-4o-mini';
   }
 
   async extractAndPersist(params: {
@@ -29,7 +31,7 @@ export class ExtractionService {
     const contextText = chunks
       .map((c) => c.content)
       .join('\n\n---\n\n')
-      .slice(0, 12000);
+      .slice(0, 6000);
 
     const entities = await this.extractEntitiesFromText(
       contextText,
@@ -83,7 +85,7 @@ JSON esperado:
 }`;
 
     const response = await this.openai.chat.completions.create({
-      model: 'gpt-4',
+      model: this.extractionModel,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       max_tokens: 1000,
