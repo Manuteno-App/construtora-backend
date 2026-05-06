@@ -9,10 +9,29 @@ import { HybridRetrieverService, RetrievalFilters, RetrievedChunk } from './hybr
 
 const NOT_FOUND_MESSAGE = 'Não encontrei informações sobre isso nos documentos indexados.';
 
-// gpt-4o-mini has a 128k-token context window.
-// Portuguese text tokenizes at ~3 chars/token.
-// Budget: 120000 usable tokens * 3 chars/token = 360000 chars — using 80000 to leave ample room for system prompt, query and response.
-const MAX_CONTEXT_CHARS = 80000;
+// Token limits per model. Models not listed here are assumed to have a 128k-token context window.
+const MODEL_TOKEN_LIMITS: Record<string, number> = {
+  'gpt-4': 8192,
+  'gpt-4-0613': 8192,
+  'gpt-4-32k': 32768,
+  'gpt-4-32k-0613': 32768,
+  'gpt-4-turbo': 128000,
+  'gpt-4-turbo-preview': 128000,
+  'gpt-4o': 128000,
+  'gpt-4o-mini': 128000,
+  'gpt-3.5-turbo': 16385,
+  'gpt-3.5-turbo-16k': 16385,
+};
+
+// Tokens reserved for the system prompt, user query, and completion.
+const RESERVED_TOKENS = 2000;
+// Conservative chars-per-token estimate for Portuguese text.
+const CHARS_PER_TOKEN = 3;
+
+function getMaxContextChars(model: string): number {
+  const tokenLimit = MODEL_TOKEN_LIMITS[model] ?? 128000;
+  return (tokenLimit - RESERVED_TOKENS) * CHARS_PER_TOKEN;
+}
 
 // Fallback model used automatically when the primary model exceeds its context window.
 const FALLBACK_CHAT_MODEL = 'gpt-4o';
@@ -231,12 +250,13 @@ export class ReasoningEngineService {
     return false;
   }
 
-  private truncateContext(text: string): string {
-    if (text.length <= MAX_CONTEXT_CHARS) return text;
+  private truncateContext(text: string, model?: string): string {
+    const maxChars = getMaxContextChars(model ?? this.chatModel);
+    if (text.length <= maxChars) return text;
     this.logger.warn(
-      `Context truncated from ${text.length} to ${MAX_CONTEXT_CHARS} chars to stay within model token limit`,
+      `Context truncated from ${text.length} to ${maxChars} chars to stay within model "${model ?? this.chatModel}" token limit`,
     );
-    return text.slice(0, MAX_CONTEXT_CHARS) + '\n\n[... conteúdo truncado por limite de contexto ...]';
+    return text.slice(0, maxChars) + '\n\n[... conteúdo truncado por limite de contexto ...]';
   }
 
   private detectIntent(query: string): QueryIntent {
