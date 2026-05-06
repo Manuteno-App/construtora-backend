@@ -14,6 +14,9 @@ const NOT_FOUND_MESSAGE = 'Não encontrei informações sobre isso nos documento
 // Budget: 120000 usable tokens * 3 chars/token = 360000 chars — using 80000 to leave ample room for system prompt, query and response.
 const MAX_CONTEXT_CHARS = 80000;
 
+// Fallback model used automatically when the primary model exceeds its context window.
+const FALLBACK_CHAT_MODEL = 'gpt-4o';
+
 const SYSTEM_PROMPT = `Você é um assistente especializado em atestados de execução de obras.
 Responda SOMENTE com base nos trechos de documentos fornecidos abaixo.
 Se a informação solicitada não estiver presente nos trechos, responda exatamente: "${NOT_FOUND_MESSAGE}"
@@ -82,15 +85,24 @@ export class ReasoningEngineService {
         return;
       }
 
-      const stream = await this.openai.chat.completions.create({
-        model: this.chatModel,
-        stream: true,
-        temperature: 0.1,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `CONTEXTO:\n${context}\n\nPERGUNTA: ${dto.query}` },
-        ],
-      });
+      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `CONTEXTO:\n${context}\n\nPERGUNTA: ${dto.query}` },
+      ];
+
+      let model = this.chatModel;
+      let stream: Awaited<ReturnType<typeof this.openai.chat.completions.create<{ stream: true }>>>;
+      try {
+        stream = await this.openai.chat.completions.create({ model, stream: true, temperature: 0.1, messages });
+      } catch (createErr) {
+        if (this.isContextLengthError(createErr) && model !== FALLBACK_CHAT_MODEL) {
+          this.logger.warn(`Context length exceeded for model "${model}", retrying with fallback model "${FALLBACK_CHAT_MODEL}"`);
+          model = FALLBACK_CHAT_MODEL;
+          stream = await this.openai.chat.completions.create({ model, stream: true, temperature: 0.1, messages });
+        } else {
+          throw createErr;
+        }
+      }
 
       let fullResponse = '';
       for await (const chunk of stream) {
@@ -125,15 +137,24 @@ export class ReasoningEngineService {
       return { answer: NOT_FOUND_MESSAGE, sources: [], notFound: true };
     }
 
-    const completion = await this.openai.chat.completions.create({
-      model: this.chatModel,
-      stream: false,
-      temperature: 0.1,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `CONTEXTO:\n${context}\n\nPERGUNTA: ${dto.query}` },
-      ],
-    });
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: `CONTEXTO:\n${context}\n\nPERGUNTA: ${dto.query}` },
+    ];
+
+    let model = this.chatModel;
+    let completion: Awaited<ReturnType<typeof this.openai.chat.completions.create<{ stream: false }>>>;
+    try {
+      completion = await this.openai.chat.completions.create({ model, stream: false, temperature: 0.1, messages });
+    } catch (createErr) {
+      if (this.isContextLengthError(createErr) && model !== FALLBACK_CHAT_MODEL) {
+        this.logger.warn(`Context length exceeded for model "${model}", retrying with fallback model "${FALLBACK_CHAT_MODEL}"`);
+        model = FALLBACK_CHAT_MODEL;
+        completion = await this.openai.chat.completions.create({ model, stream: false, temperature: 0.1, messages });
+      } else {
+        throw createErr;
+      }
+    }
 
     const text = completion.choices[0]?.message?.content ?? NOT_FOUND_MESSAGE;
     await this.persistTurns(dto.query, text, dto.sessionId, sources);
@@ -194,6 +215,16 @@ export class ReasoningEngineService {
     const context = this.truncateContext(contextParts.join('\n\n'));
 
     return { notFound: false, chunks, sources, context };
+  }
+
+  private isContextLengthError(err: unknown): boolean {
+    if (err && typeof err === 'object') {
+      const e = err as { status?: number; code?: string; message?: string; error?: { code?: string } };
+      const code = e.code ?? (e.error?.code ?? '');
+      const msg = e.message ?? '';
+      return e.status === 400 && (code === 'context_length_exceeded' || msg.includes('maximum context length'));
+    }
+    return false;
   }
 
   private truncateContext(text: string): string {
