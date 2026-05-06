@@ -91,14 +91,16 @@ export class ReasoningEngineService {
       ];
 
       let model = this.chatModel;
-      let stream: Awaited<ReturnType<typeof this.openai.chat.completions.create<{ stream: true }>>>;
+      const makeStream = (m: string) =>
+        this.openai.chat.completions.create({ model: m, stream: true, temperature: 0.1, messages });
+      let stream: Awaited<ReturnType<typeof makeStream>>;
       try {
-        stream = await this.openai.chat.completions.create({ model, stream: true, temperature: 0.1, messages });
+        stream = await makeStream(model);
       } catch (createErr) {
         if (this.isContextLengthError(createErr) && model !== FALLBACK_CHAT_MODEL) {
           this.logger.warn(`Context length exceeded for model "${model}", retrying with fallback model "${FALLBACK_CHAT_MODEL}"`);
           model = FALLBACK_CHAT_MODEL;
-          stream = await this.openai.chat.completions.create({ model, stream: true, temperature: 0.1, messages });
+          stream = await makeStream(model);
         } else {
           throw createErr;
         }
@@ -143,14 +145,16 @@ export class ReasoningEngineService {
     ];
 
     let model = this.chatModel;
-    let completion: Awaited<ReturnType<typeof this.openai.chat.completions.create<{ stream: false }>>>;
+    const makeCompletion = (m: string) =>
+      this.openai.chat.completions.create({ model: m, stream: false, temperature: 0.1, messages });
+    let completion: Awaited<ReturnType<typeof makeCompletion>>;
     try {
-      completion = await this.openai.chat.completions.create({ model, stream: false, temperature: 0.1, messages });
+      completion = await makeCompletion(model);
     } catch (createErr) {
       if (this.isContextLengthError(createErr) && model !== FALLBACK_CHAT_MODEL) {
         this.logger.warn(`Context length exceeded for model "${model}", retrying with fallback model "${FALLBACK_CHAT_MODEL}"`);
         model = FALLBACK_CHAT_MODEL;
-        completion = await this.openai.chat.completions.create({ model, stream: false, temperature: 0.1, messages });
+        completion = await makeCompletion(model);
       } else {
         throw createErr;
       }
