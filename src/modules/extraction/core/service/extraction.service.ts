@@ -1,9 +1,9 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
-import { EntityOrchestrationService, ExtractedEntities } from './entity-orchestration.service';
-import { IIngestionApi, INGESTION_API } from '../../../ingestion/public-api/interface/ingestion-api.interface';
 import type { ServicoItem } from '../../../ingestion/core/service/table-extractor.service';
+import { IIngestionApi, INGESTION_API } from '../../../ingestion/public-api/interface/ingestion-api.interface';
+import { EntityOrchestrationService, ExtractedEntities } from './entity-orchestration.service';
 
 @Injectable()
 export class ExtractionService {
