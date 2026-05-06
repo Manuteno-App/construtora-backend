@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { TerminusModule } from '@nestjs/terminus';
 import { configuration, configurationSchema } from './config/configuration';
@@ -10,6 +11,8 @@ import { IngestionModule } from './modules/ingestion/ingestion.module';
 import { ExtractionModule } from './modules/extraction/extraction.module';
 import { IndexingModule } from './modules/indexing/indexing.module';
 import { IntelligenceModule } from './modules/intelligence/intelligence.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -29,7 +32,14 @@ import { HealthController } from './health.controller';
     ExtractionModule,
     IndexingModule,
     IntelligenceModule,
+    AuthModule,
   ],
   controllers: [HealthController],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+  ],
 })
 export class AppModule {}

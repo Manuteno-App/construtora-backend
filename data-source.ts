@@ -8,13 +8,14 @@ import { ServicoExecutado } from './src/modules/extraction/persistence/entity/se
 import { Embedding } from './src/modules/indexing/persistence/entity/embedding.entity';
 import { Chunk } from './src/modules/ingestion/persistence/entity/chunk.entity';
 import { ConversationTurn } from './src/modules/intelligence/persistence/entity/conversation-turn.entity';
+import { UserEntity } from './src/modules/auth/persistence/entity/user.entity';
 
 dotenv.config();
 
 const AppDataSource = new DataSource({
   type: 'postgres',
   url: process.env.DATABASE_URL,
-  entities: [Atestado, Chunk, Embedding, Obra, Empresa, Contrato, ServicoExecutado, ConversationTurn],
+  entities: [Atestado, Chunk, Embedding, Obra, Empresa, Contrato, ServicoExecutado, ConversationTurn, UserEntity],
   migrations: ['src/migrations/*.ts'],
   synchronize: false,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,

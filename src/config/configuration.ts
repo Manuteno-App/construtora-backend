@@ -24,6 +24,13 @@ export const configurationSchema = Joi.object({
   RAG_TOP_K: Joi.number().default(10),
   RAG_SIMILARITY_THRESHOLD: Joi.number().default(0.35),
 
+  JWT_ACCESS_SECRET: Joi.string().required(),
+  JWT_REFRESH_SECRET: Joi.string().required(),
+  JWT_ACCESS_EXPIRATION: Joi.string().default('15m'),
+  JWT_REFRESH_EXPIRATION: Joi.string().default('7d'),
+
+  ADMIN_EMAIL: Joi.string().email().required(),
+  ADMIN_PASSWORD: Joi.string().min(8).required(),
 });
 
 export const configuration = () => ({
@@ -54,6 +61,18 @@ export const configuration = () => ({
   rag: {
     topK: parseInt(process.env.RAG_TOP_K ?? '10', 10),
     similarityThreshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD ?? '0.35'),
+  },
+
+  jwt: {
+    accessSecret: process.env.JWT_ACCESS_SECRET,
+    refreshSecret: process.env.JWT_REFRESH_SECRET,
+    accessExpiration: process.env.JWT_ACCESS_EXPIRATION ?? '15m',
+    refreshExpiration: process.env.JWT_REFRESH_EXPIRATION ?? '7d',
+  },
+
+  admin: {
+    email: process.env.ADMIN_EMAIL,
+    password: process.env.ADMIN_PASSWORD,
   },
 
 });
