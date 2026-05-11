@@ -57,7 +57,7 @@ export const configuration = () => ({
   },
 
   rag: {
-    topK: parseInt(process.env.RAG_TOP_K ?? '20', 10),
+    topK: parseInt(process.env.RAG_TOP_K ?? '200', 10),
     similarityThreshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD ?? '0.35'),
   },
 
