@@ -4,7 +4,6 @@ import { BullModule } from '@nestjs/bullmq';
 import { Chunk } from './persistence/entity/chunk.entity';
 import { ChunkRepository } from './persistence/repository/chunk.repository';
 import { IngestionService } from './core/service/ingestion.service';
-import { OcrService } from './core/service/ocr.service';
 import { TableExtractorService } from './core/service/table-extractor.service';
 import { VisionService } from './core/service/vision.service';
 import { IngestionFacade } from './public-api/facade/ingestion.facade';
@@ -24,7 +23,6 @@ import { INGESTION_QUEUE, EXTRACTION_QUEUE } from '../infrastructure/queue/queue
   ],
   providers: [
     ChunkRepository,
-    OcrService,
     TableExtractorService,
     VisionService,
     IngestionService,

@@ -1,20 +1,43 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
-import type { OcrResult } from './ocr.service';
 
 // Dynamic imports used to avoid hard dependency at module load time
 type CanvasLib = typeof import('canvas');
 type PdfjsLib = typeof import('pdfjs-dist');
 
+export interface TextractCell {
+  rowIndex: number;
+  colIndex: number;
+  rowSpan: number;
+  colSpan: number;
+  text: string;
+  confidence: number;
+}
+
+export interface TextractTable {
+  page: number;
+  cells: TextractCell[];
+  rows: number;
+  cols: number;
+}
+
+export interface OcrResult {
+  text: string;
+  pages: Array<{ pageNumber: number; text: string }>;
+  tables: TextractTable[];
+  keyValuePairs: Record<string, string>;
+  avgConfidence: number;
+}
+
 /**
- * VisionService — GPT-4o Vision fallback for low-confidence scanned PDFs.
+ * VisionService — GPT-4o Vision OCR for scanned PDFs.
  *
  * Requires pdfjs-dist and canvas to be installed:
  *   npm install pdfjs-dist canvas
  *
  * The service gracefully degrades: if those packages are unavailable, it logs
- * a warning and skips the vision analysis.
+ * a warning and returns an empty result.
  */
 @Injectable()
 export class VisionService implements OnModuleInit {
@@ -23,9 +46,6 @@ export class VisionService implements OnModuleInit {
 
   private canvasLib: CanvasLib | null = null;
   private pdfjsLib: PdfjsLib | null = null;
-
-  /** Minimum average Textract confidence (0–100) below which Vision is triggered */
-  private static readonly CONFIDENCE_THRESHOLD = 80;
 
   constructor(private readonly config: ConfigService) {
     this.openai = new OpenAI({ apiKey: config.get<string>('openaiApiKey') });
@@ -58,43 +78,41 @@ export class VisionService implements OnModuleInit {
   }
 
   /**
-   * Re-analyses the document with GPT-4o Vision when Textract confidence is low.
-   * Returns an enriched OcrResult with corrected text; tables and keyValuePairs
-   * from Textract are preserved as they are structurally reliable.
+   * Analyses a PDF with GPT-4o Vision and returns an OcrResult.
+   * Used as the primary OCR path for scanned documents when pdf-parse yields
+   * sparse text.
    */
-  async analyzeIfNeeded(
-    buffer: Buffer,
-    existingResult: OcrResult,
-  ): Promise<OcrResult> {
-    if (!this.isAvailable()) return existingResult;
+  async analyze(buffer: Buffer): Promise<OcrResult> {
+    const empty: OcrResult = {
+      text: '',
+      pages: [],
+      tables: [],
+      keyValuePairs: {},
+      avgConfidence: 0,
+    };
 
-    if (existingResult.avgConfidence >= VisionService.CONFIDENCE_THRESHOLD) {
-      this.logger.debug(
-        `Textract confidence ${existingResult.avgConfidence.toFixed(1)}% — Vision not needed`,
-      );
-      return existingResult;
+    if (!this.isAvailable()) {
+      this.logger.warn('VisionService not available — pdfjs-dist or canvas missing');
+      return empty;
     }
-
-    this.logger.log(
-      `Low OCR confidence (${existingResult.avgConfidence.toFixed(1)}%) — running GPT-4o Vision`,
-    );
 
     try {
       const pageImages = await this.renderPdfPages(buffer);
-      if (pageImages.length === 0) return existingResult;
+      if (pageImages.length === 0) return empty;
 
       const visionText = await this.callVisionApi(pageImages);
-      const visionPages = this.splitIntoPages(visionText);
+      const pages = this.splitIntoPages(visionText);
 
       return {
-        ...existingResult,
-        text: visionPages.map((p) => p.text).join('\n\n'),
-        pages: visionPages.length > 0 ? visionPages : existingResult.pages,
-        // Keep Textract's structured tables and key-value pairs
+        text: pages.map((p) => p.text).join('\n\n'),
+        pages,
+        tables: [],
+        keyValuePairs: {},
+        avgConfidence: 100,
       };
     } catch (err) {
-      this.logger.warn('Vision analysis failed — keeping Textract result', err);
-      return existingResult;
+      this.logger.error('Vision analysis failed', err);
+      return empty;
     }
   }
 

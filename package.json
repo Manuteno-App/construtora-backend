@@ -24,7 +24,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1019.0",
-    "@aws-sdk/client-textract": "^3.1019.0",
     "@aws-sdk/s3-request-presigner": "^3.1019.0",
     "@langchain/community": "^0.3.59",
     "@langchain/openai": "^0.3.17",

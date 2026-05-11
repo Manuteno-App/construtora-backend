@@ -8,8 +8,6 @@ export const configurationSchema = Joi.object({
   REDIS_URL: Joi.string().required(),
 
   AWS_REGION: Joi.string().required(),
-  AWS_TEXTRACT_REGION: Joi.string().default('us-east-1'),
-  AWS_TEXTRACT_BUCKET: Joi.string().required(),
   AWS_ACCESS_KEY_ID: Joi.string().required(),
   AWS_SECRET_ACCESS_KEY: Joi.string().required(),
   AWS_S3_BUCKET: Joi.string().required(),
@@ -43,8 +41,6 @@ export const configuration = () => ({
 
   aws: {
     region: process.env.AWS_REGION,
-    textractRegion: process.env.AWS_TEXTRACT_REGION ?? 'us-east-1',
-    textractBucket: process.env.AWS_TEXTRACT_BUCKET,
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     s3Bucket: process.env.AWS_S3_BUCKET,

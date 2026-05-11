@@ -3,7 +3,6 @@ import { Job, Queue } from 'bullmq';
 import { Inject, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { StorageService } from '../../infrastructure/storage/storage.service';
-import { OcrService } from '../core/service/ocr.service';
 import { TableExtractorService } from '../core/service/table-extractor.service';
 import { VisionService } from '../core/service/vision.service';
 import { ChunkRepository, CreateChunkData } from '../persistence/repository/chunk.repository';
@@ -27,7 +26,6 @@ export class IngestionProcessor extends WorkerHost {
 
   constructor(
     private readonly storage: StorageService,
-    private readonly ocr: OcrService,
     private readonly tableExtractor: TableExtractorService,
     private readonly vision: VisionService,
     private readonly chunkRepo: ChunkRepository,
@@ -76,10 +74,9 @@ export class IngestionProcessor extends WorkerHost {
 
       if (needsOcr) {
         this.logger.log(
-          `Using Textract OCR for ${atestadoId} (fullText=${fullText.length} chars, sparseRatio=${sparseRatio.toFixed(2)})`,
+          `Using Vision OCR for ${atestadoId} (fullText=${fullText.length} chars, sparseRatio=${sparseRatio.toFixed(2)})`,
         );
-        let ocrResult = await this.ocr.extractText(buffer);
-        ocrResult = await this.vision.analyzeIfNeeded(buffer, ocrResult);
+        const ocrResult = await this.vision.analyze(buffer);
         fullText = ocrResult.text;
         pages = ocrResult.pages;
         keyValuePairs = ocrResult.keyValuePairs;
@@ -104,7 +101,7 @@ export class IngestionProcessor extends WorkerHost {
           keyValuePairs,
         });
         this.logger.log(
-          `Ingestion done for ${atestadoId}: ${savedChunks.length} chunks, ${tabelaServicos.length} servicos (Textract)`,
+          `Ingestion done for ${atestadoId}: ${savedChunks.length} chunks, ${tabelaServicos.length} servicos (Vision)`,
         );
         return;
       }
