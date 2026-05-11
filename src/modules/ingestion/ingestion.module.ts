@@ -1,18 +1,18 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BullModule } from '@nestjs/bullmq';
-import { Chunk } from './persistence/entity/chunk.entity';
-import { ChunkRepository } from './persistence/repository/chunk.repository';
+import { DocumentsModule } from '../documents/documents.module';
+import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../infrastructure/queue/queue.module';
+import { StorageModule } from '../infrastructure/storage/storage.module';
 import { IngestionService } from './core/service/ingestion.service';
 import { TableExtractorService } from './core/service/table-extractor.service';
 import { VisionService } from './core/service/vision.service';
+import { IngestionController } from './http/rest/controller/ingestion.controller';
+import { Chunk } from './persistence/entity/chunk.entity';
+import { ChunkRepository } from './persistence/repository/chunk.repository';
+import { IngestionProcessor } from './processor/ingestion.processor';
 import { IngestionFacade } from './public-api/facade/ingestion.facade';
 import { INGESTION_API } from './public-api/interface/ingestion-api.interface';
-import { IngestionProcessor } from './processor/ingestion.processor';
-import { IngestionController } from './http/rest/controller/ingestion.controller';
-import { DocumentsModule } from '../documents/documents.module';
-import { StorageModule } from '../infrastructure/storage/storage.module';
-import { INGESTION_QUEUE, EXTRACTION_QUEUE } from '../infrastructure/queue/queue.module';
 
 @Module({
   imports: [

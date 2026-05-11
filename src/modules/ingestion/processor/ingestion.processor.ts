@@ -1,14 +1,13 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job, Queue } from 'bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
+import { Job, Queue } from 'bullmq';
+import { AtestadoStatus } from '../../documents/persistence/entity/atestado.entity';
+import { DOCUMENTS_API, IDocumentsApi } from '../../documents/public-api/interface/documents-api.interface';
+import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../../infrastructure/queue/queue.module';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { TableExtractorService } from '../core/service/table-extractor.service';
 import { VisionService } from '../core/service/vision.service';
 import { ChunkRepository, CreateChunkData } from '../persistence/repository/chunk.repository';
-import { IDocumentsApi, DOCUMENTS_API } from '../../documents/public-api/interface/documents-api.interface';
-import { AtestadoStatus } from '../../documents/persistence/entity/atestado.entity';
-import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../../infrastructure/queue/queue.module';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse');

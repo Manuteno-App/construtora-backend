@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { TextractTable, OcrResult } from './vision.service';
+import type { OcrResult, TextractTable } from './vision.service';
 
 export interface ServicoItem {
   trecho?: string;
