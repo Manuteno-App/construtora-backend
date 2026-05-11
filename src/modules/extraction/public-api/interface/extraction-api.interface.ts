@@ -10,6 +10,7 @@ export interface IExtractionApi {
   getServicosByAtestadoId(atestadoId: string, categoria?: string): Promise<ServicoExecutado[]>;
   getQuantitativos(filters: QuantitativoFilters): Promise<QuantitativoRow[]>;
   getQuantitativosAsMarkdown(filters: QuantitativoFilters): Promise<string>;
+  getAnalyticsAsMarkdown(): Promise<string>;
 }
 
 export const EXTRACTION_API = Symbol('IExtractionApi');

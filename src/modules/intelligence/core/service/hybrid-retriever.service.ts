@@ -47,7 +47,7 @@ export class HybridRetrieverService {
     for (const row of keywordRows) {
       const existing = merged.get(row.chunkId);
       if (!existing) {
-        merged.set(row.chunkId, { ...row, similarity: 1.0 });
+        merged.set(row.chunkId, { ...row, similarity: row.similarity });
       } else {
         merged.set(row.chunkId, {
           ...existing,
@@ -79,10 +79,10 @@ export class HybridRetrieverService {
       'o', 'a', 'os', 'as', 'um', 'uma', 'uns', 'umas',
       'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas',
       'por', 'para', 'com', 'sem', 'sob', 'sobre', 'entre', 'até', 'ate',
-      'que', 'qual', 'quais', 'como', 'quando', 'onde', 'quem',
+      'que', 'qual', 'quais', 'como', 'quando', 'onde', 'quem', 'quantos', 'quanto',
       'tem', 'há', 'ha', 'ter', 'ser', 'é', 'e', 'são', 'sao',
       'me', 'te', 'se', 'nos', 'vos', 'lhe', 'lhes',
-      'este', 'essa', 'isso', 'aqui', 'ali', 'mais', 'muito',
+      'este', 'essa', 'isso', 'aqui', 'ali', 'mais', 'muito', 'maior', 'melhor',
       'favor', 'liste', 'listar', 'mostre', 'mostrar', 'diga', 'dizer',
       'existe', 'existem', 'encontrou', 'encontrar', 'falar', 'fale',
     ]);

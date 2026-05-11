@@ -44,7 +44,7 @@ Ao citar um dado, sempre indique o documento de origem no formato [Fonte: <filen
 
 type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO';
 
-const QUANTITATIVO_KEYWORDS = /total|volume|quantidade|soma|quanto|somar|somatório|medição/i;
+const QUANTITATIVO_KEYWORDS = /total|volume|quantidade|soma|quanto|somar|somatório|medição|mais|ranking|frequente|maior|recorrente|demandado|acumulado|executado/i;
 const LISTAGEM_KEYWORDS = /quais|liste|listar|enumere|relação de|relação das/i;
 
 export interface SourceRef {
@@ -134,10 +134,11 @@ export class ReasoningEngineService {
         }
       }
 
-      emit({ type: 'sources', sources });
+      const filteredSources = this.filterSourcesByResponse(this.deduplicateSources(sources), fullResponse);
+      emit({ type: 'sources', sources: filteredSources });
       emit({ type: 'done' });
 
-      await this.persistTurns(dto.query, fullResponse, dto.sessionId, sources);
+      await this.persistTurns(dto.query, fullResponse, dto.sessionId, filteredSources);
       res.end();
     } catch (err) {
       this.logger.error('Error in streamAnswer', err);
@@ -180,9 +181,10 @@ export class ReasoningEngineService {
     }
 
     const text = completion.choices[0]?.message?.content ?? NOT_FOUND_MESSAGE;
-    await this.persistTurns(dto.query, text, dto.sessionId, sources);
+    const filteredSources = this.filterSourcesByResponse(this.deduplicateSources(sources), text);
+    await this.persistTurns(dto.query, text, dto.sessionId, filteredSources);
 
-    return { answer: text, sources, notFound: false };
+    return { answer: text, sources: filteredSources, notFound: false };
   }
 
   private async buildContext(dto: QueryDto): Promise<{
@@ -216,8 +218,8 @@ export class ReasoningEngineService {
     );
 
     if (intent === 'QUANTITATIVO') {
-      const table = await this.extractionApi.getQuantitativosAsMarkdown({});
-      if (table) contextParts.push(`\n\n**Dados quantitativos (SQL):**\n${table}`);
+      const table = await this.extractionApi.getAnalyticsAsMarkdown();
+      if (table) contextParts.push(`\n\n**Dados analíticos (SQL):**\n${table}`);
     }
 
     if (dto.sessionId) {
@@ -257,6 +259,29 @@ export class ReasoningEngineService {
       `Context truncated from ${text.length} to ${maxChars} chars to stay within model "${model ?? this.chatModel}" token limit`,
     );
     return text.slice(0, maxChars) + '\n\n[... conteúdo truncado por limite de contexto ...]';
+  }
+
+  private deduplicateSources(sources: SourceRef[]): SourceRef[] {
+    const seen = new Set<string>();
+    return sources.filter((s) => {
+      const key = `${s.atestadoId}::${s.pagina}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  private filterSourcesByResponse(sources: SourceRef[], response: string): SourceRef[] {
+    // Parse all [Fonte: <filename>, p.N] citations from the response
+    const citationRe = /\[Fonte:\s*([^,\]]+),\s*p\.\s*(\d+)\]/gi;
+    const cited = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = citationRe.exec(response)) !== null) {
+      cited.add(match[1].trim().toLowerCase());
+    }
+    // If the LLM produced no citations, fall back to all deduplicated sources
+    if (cited.size === 0) return sources;
+    return sources.filter((s) => cited.has(s.filename.toLowerCase()));
   }
 
   private detectIntent(query: string): QueryIntent {

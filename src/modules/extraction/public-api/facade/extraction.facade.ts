@@ -29,10 +29,37 @@ export class ExtractionFacade implements IExtractionApi {
     const rows = await this.servicoRepo.aggregateQuantitativos(filters);
     if (rows.length === 0) return '';
 
-    const header = '| Descrição | Unidade | Total |\n|---|---|---|';
+    const header = '| Descrição | Unidade | Total | Nº Atestados |\n|---|---|---|---|';
     const body = rows
-      .map((r) => `| ${r.descricao} | ${r.unidade ?? '-'} | ${r.total} |`)
+      .map((r) => `| ${r.descricao} | ${r.unidade ?? '-'} | ${r.total} | ${r.atestados.length} |`)
       .join('\n');
     return `${header}\n${body}`;
+  }
+
+  async getAnalyticsAsMarkdown(): Promise<string> {
+    const parts: string[] = [];
+
+    // Top services by accumulated quantity
+    const servicos = await this.servicoRepo.aggregateQuantitativos({});
+    if (servicos.length > 0) {
+      const top = servicos.slice(0, 15);
+      const header = '**Top serviços executados (por quantidade acumulada):**\n| Descrição | Unidade | Total | Nº Atestados |\n|---|---|---|---|';
+      const body = top
+        .map((r) => `| ${r.descricao} | ${r.unidade ?? '-'} | ${r.total} | ${r.atestados.length} |`)
+        .join('\n');
+      parts.push(`${header}\n${body}`);
+    }
+
+    // Top companies by number of atestados
+    const empresas = await this.obraRepo.aggregateEmpresas(15);
+    if (empresas.length > 0) {
+      const header = '**Empresas por número de atestados:**\n| Empresa | Tipo | Nº Atestados |\n|---|---|---|';
+      const body = empresas
+        .map((e) => `| ${e.nome} | ${e.tipo ?? '-'} | ${e.atestados} |`)
+        .join('\n');
+      parts.push(`${header}\n${body}`);
+    }
+
+    return parts.join('\n\n');
   }
 }

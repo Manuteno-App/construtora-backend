@@ -15,6 +15,12 @@ export interface CreateObraData {
   art?: string;
 }
 
+export interface EmpresaRankingRow {
+  nome: string;
+  tipo: string | null;
+  atestados: number;
+}
+
 @Injectable()
 export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
   constructor(@InjectDataSource() dataSource: DataSource) {
@@ -31,5 +37,23 @@ export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
   async createAndSave(data: CreateObraData): Promise<Obra> {
     const entity = super.create(data);
     return (await super.save(entity)) as Obra;
+  }
+
+  async aggregateEmpresas(limit = 15): Promise<EmpresaRankingRow[]> {
+    return this.query<EmpresaRankingRow>(
+      `
+      SELECT
+        e.nome                               AS nome,
+        e.tipo                               AS tipo,
+        COUNT(DISTINCT o.atestado_id)::int   AS atestados
+      FROM obras o
+      JOIN contratos ct ON ct.obra_id = o.id
+      JOIN empresas  e  ON e.id = ct.empresa_id
+      GROUP BY e.id, e.nome, e.tipo
+      ORDER BY atestados DESC
+      LIMIT $1
+      `,
+      [limit],
+    );
   }
 }
