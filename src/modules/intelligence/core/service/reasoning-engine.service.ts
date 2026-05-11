@@ -135,7 +135,8 @@ export class ReasoningEngineService {
         }
       }
 
-      const filteredSources = this.filterSourcesByResponse(this.deduplicateSources(sources), fullResponse);
+      const isNotFound = fullResponse.includes(NOT_FOUND_MESSAGE);
+      const filteredSources = isNotFound ? [] : this.filterSourcesByResponse(this.deduplicateSources(sources), fullResponse);
       emit({ type: 'sources', sources: filteredSources });
       emit({ type: 'done' });
 
@@ -182,10 +183,11 @@ export class ReasoningEngineService {
     }
 
     const text = completion.choices[0]?.message?.content ?? NOT_FOUND_MESSAGE;
-    const filteredSources = this.filterSourcesByResponse(this.deduplicateSources(sources), text);
+    const isNotFound = text.includes(NOT_FOUND_MESSAGE);
+    const filteredSources = isNotFound ? [] : this.filterSourcesByResponse(this.deduplicateSources(sources), text);
     await this.persistTurns(dto.query, text, dto.sessionId, filteredSources);
 
-    return { answer: text, sources: filteredSources, notFound: false };
+    return { answer: text, sources: filteredSources, notFound: isNotFound };
   }
 
   private async buildContext(dto: QueryDto): Promise<{
