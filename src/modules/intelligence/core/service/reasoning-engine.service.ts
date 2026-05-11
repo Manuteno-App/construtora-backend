@@ -40,7 +40,8 @@ const SYSTEM_PROMPT = `Você é um assistente especializado em atestados de exec
 Responda SOMENTE com base nos trechos de documentos fornecidos abaixo.
 Se a informação solicitada não estiver presente nos trechos, responda exatamente: "${NOT_FOUND_MESSAGE}"
 Não invente dados, valores, datas, nomes ou quantidades.
-Ao citar um dado, sempre indique o documento de origem no formato [Fonte: <filename>, p.<pagina>].`;
+Ao citar um dado, sempre indique o documento de origem no formato [Fonte: <filename>, p.<pagina>].
+Cite cada fonte individualmente com seu próprio colchete. Nunca agrupe múltiplas fontes no mesmo colchete com ponto e vírgula.`;
 
 type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO';
 
@@ -272,14 +273,18 @@ export class ReasoningEngineService {
   }
 
   private filterSourcesByResponse(sources: SourceRef[], response: string): SourceRef[] {
-    // Parse all [Fonte: <filename>, p.N] citations from the response
-    const citationRe = /\[Fonte:\s*([^,\]]+),\s*p\.\s*(\d+)\]/gi;
+    // Parse all [Fonte: ...] brackets, supporting both single and semicolon-grouped citations:
+    // [Fonte: file.pdf, p.1]  or  [Fonte: file1.pdf, p.1; file2.pdf, p.1; ...]
+    const bracketRe = /\[Fonte:\s*([^\]]+)\]/gi;
     const cited = new Set<string>();
-    let match: RegExpExecArray | null;
-    while ((match = citationRe.exec(response)) !== null) {
-      cited.add(match[1].trim().toLowerCase());
+    let m: RegExpExecArray | null;
+    while ((m = bracketRe.exec(response)) !== null) {
+      for (const entry of m[1].split(';')) {
+        const fm = entry.trim().match(/^(.+?),\s*p\.\s*\d+/i);
+        if (fm) cited.add(fm[1].trim().toLowerCase());
+      }
     }
-    // If the LLM produced no citations, fall back to all deduplicated sources
+    // If the LLM produced no parseable citations, fall back to all deduplicated sources
     if (cited.size === 0) return sources;
     return sources.filter((s) => cited.has(s.filename.toLowerCase()));
   }

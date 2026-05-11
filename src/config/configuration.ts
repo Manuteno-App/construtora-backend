@@ -20,7 +20,7 @@ export const configurationSchema = Joi.object({
   EMBEDDING_DIMENSIONS: Joi.number().default(1536),
   EMBEDDING_BATCH_SIZE: Joi.number().default(20),
 
-  RAG_TOP_K: Joi.number().default(10),
+  RAG_TOP_K: Joi.number().default(20),
   RAG_SIMILARITY_THRESHOLD: Joi.number().default(0.35),
 
   JWT_ACCESS_SECRET: Joi.string().required(),
@@ -57,7 +57,7 @@ export const configuration = () => ({
   },
 
   rag: {
-    topK: parseInt(process.env.RAG_TOP_K ?? '10', 10),
+    topK: parseInt(process.env.RAG_TOP_K ?? '20', 10),
     similarityThreshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD ?? '0.35'),
   },
 

@@ -46,7 +46,8 @@ export class EmbeddingRepository extends DefaultTypeOrmRepository<Embedding> {
   }
 
   async keywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]> {
-    const conditions = keywords.map((_, i) => `c.content ILIKE $${i + 1}`).join(' OR ');
+    const contentConditions = keywords.map((_, i) => `c.content ILIKE $${i + 1}`).join(' OR ');
+    const filenameConditions = keywords.map((_, i) => `c.original_filename ILIKE $${i + 1}`).join(' OR ');
     const params: unknown[] = keywords.map((k) => `%${k}%`);
     params.push(String(limit));
 
@@ -60,7 +61,7 @@ export class EmbeddingRepository extends DefaultTypeOrmRepository<Embedding> {
         c.content,
         0.5               AS similarity
       FROM chunks c
-      WHERE ${conditions}
+      WHERE (${contentConditions}) OR (${filenameConditions})
       LIMIT $${params.length}
       `,
       params,
