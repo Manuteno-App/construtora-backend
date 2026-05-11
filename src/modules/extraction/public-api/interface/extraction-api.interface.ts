@@ -1,8 +1,8 @@
 import { Obra } from '../../persistence/entity/obra.entity';
 import { ServicoExecutado } from '../../persistence/entity/servico-executado.entity';
 import {
-  QuantitativoRow,
-  QuantitativoFilters,
+    QuantitativoFilters,
+    QuantitativoRow,
 } from '../../persistence/repository/servico-executado.repository';
 
 export interface IExtractionApi {

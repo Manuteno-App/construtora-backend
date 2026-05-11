@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { IExtractionApi } from '../interface/extraction-api.interface';
-import { ObraRepository } from '../../persistence/repository/obra.repository';
-import { ServicoExecutadoRepository } from '../../persistence/repository/servico-executado.repository';
 import type { Obra } from '../../persistence/entity/obra.entity';
 import type { ServicoExecutado } from '../../persistence/entity/servico-executado.entity';
-import type { QuantitativoRow, QuantitativoFilters } from '../../persistence/repository/servico-executado.repository';
+import { ObraRepository } from '../../persistence/repository/obra.repository';
+import type { QuantitativoFilters, QuantitativoRow } from '../../persistence/repository/servico-executado.repository';
+import { ServicoExecutadoRepository } from '../../persistence/repository/servico-executado.repository';
+import { IExtractionApi } from '../interface/extraction-api.interface';
 
 @Injectable()
 export class ExtractionFacade implements IExtractionApi {
