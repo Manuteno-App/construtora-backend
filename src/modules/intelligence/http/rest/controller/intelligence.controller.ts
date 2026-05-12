@@ -1,22 +1,22 @@
 import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Param,
-  Query,
-  Res,
-  Inject,
-  HttpCode,
-  HttpStatus,
+    Body,
+    Controller,
+    Get,
+    HttpCode,
+    HttpStatus,
+    Inject,
+    Param,
+    Post,
+    Query,
+    Res,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { ApiTags, ApiOperation, ApiBody, ApiQuery } from '@nestjs/swagger';
-import { IsString, IsOptional, IsObject, ValidateNested, IsDateString } from 'class-validator';
+import { ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { IsDateString, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { Response } from 'express';
+import { EXTRACTION_API, IExtractionApi } from '../../../../extraction/public-api/interface/extraction-api.interface';
 import { ReasoningEngineService } from '../../../core/service/reasoning-engine.service';
 import { ConversationTurnRepository } from '../../../persistence/repository/conversation-turn.repository';
-import { IExtractionApi, EXTRACTION_API } from '../../../../extraction/public-api/interface/extraction-api.interface';
 
 class PeriodoDto {
   @IsDateString() de!: string;

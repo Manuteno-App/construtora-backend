@@ -1,9 +1,9 @@
 import { Obra } from '../../persistence/entity/obra.entity';
 import { ServicoExecutado } from '../../persistence/entity/servico-executado.entity';
 import {
-    QuantitativoFilters,
-    QuantitativoRow,
-    ServiceContextResult,
+  QuantitativoFilters,
+  QuantitativoRow,
+  ServiceContextResult,
 } from '../../persistence/repository/servico-executado.repository';
 
 export interface AnalyticsHints {
