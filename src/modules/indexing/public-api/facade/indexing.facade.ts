@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { IIndexingApi } from '../interface/indexing-api.interface';
 import { EmbeddingService } from '../../core/service/embedding.service';
 import { EmbeddingRepository, RetrievedChunk } from '../../persistence/repository/embedding.repository';
+import { IIndexingApi } from '../interface/indexing-api.interface';
 
 @Injectable()
 export class IndexingFacade implements IIndexingApi {
