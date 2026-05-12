@@ -46,8 +46,14 @@ export class EmbeddingRepository extends DefaultTypeOrmRepository<Embedding> {
   }
 
   async keywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]> {
-    const contentConditions = keywords.map((_, i) => `c.content ILIKE $${i + 1}`).join(' OR ');
-    const filenameConditions = keywords.map((_, i) => `c.original_filename ILIKE $${i + 1}`).join(' OR ');
+    if (keywords.length === 0) return [];
+
+    const orContent = keywords.map((_, i) => `c.content ILIKE $${i + 1}`).join(' OR ');
+    const orFilename = keywords.map((_, i) => `c.original_filename ILIKE $${i + 1}`).join(' OR ');
+    // Score = number of keywords that appear in content (used for ORDER BY)
+    const scoreExpr = keywords
+      .map((_, i) => `(CASE WHEN c.content ILIKE $${i + 1} THEN 1 ELSE 0 END)`)
+      .join(' + ');
     const params: unknown[] = keywords.map((k) => `%${k}%`);
     params.push(String(limit));
 
@@ -61,7 +67,36 @@ export class EmbeddingRepository extends DefaultTypeOrmRepository<Embedding> {
         c.content,
         0.5               AS similarity
       FROM chunks c
-      WHERE (${contentConditions}) OR (${filenameConditions})
+      WHERE (${orContent}) OR (${orFilename})
+      ORDER BY (${scoreExpr}) DESC
+      LIMIT $${params.length}
+      `,
+      params,
+    );
+  }
+
+  /**
+   * Strict AND search: all keywords must appear in the same chunk.
+   * Returns similarity=0.9 so results always pass the threshold and rank first.
+   */
+  async strictKeywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]> {
+    if (keywords.length === 0) return [];
+
+    const andConditions = keywords.map((_, i) => `c.content ILIKE $${i + 1}`).join(' AND ');
+    const params: unknown[] = keywords.map((k) => `%${k}%`);
+    params.push(String(limit));
+
+    return this.query<RetrievedChunk>(
+      `
+      SELECT
+        c.id              AS "chunkId",
+        c.atestado_id     AS "atestadoId",
+        c.original_filename AS "originalFilename",
+        c.page_number     AS "pageNumber",
+        c.content,
+        0.9               AS similarity
+      FROM chunks c
+      WHERE ${andConditions}
       LIMIT $${params.length}
       `,
       params,

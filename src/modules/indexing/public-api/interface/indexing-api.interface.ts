@@ -6,6 +6,7 @@ export interface IIndexingApi {
   toVectorLiteral(embedding: number[]): string;
   searchSimilar(vectorLiteral: string, limit: number): Promise<RetrievedChunk[]>;
   keywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]>;
+  strictKeywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]>;
 }
 
 export const INDEXING_API = Symbol('IIndexingApi');

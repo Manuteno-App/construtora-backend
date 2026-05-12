@@ -29,4 +29,8 @@ export class IndexingFacade implements IIndexingApi {
   keywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]> {
     return this.embeddingRepo.keywordSearch(keywords, limit);
   }
+
+  strictKeywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]> {
+    return this.embeddingRepo.strictKeywordSearch(keywords, limit);
+  }
 }

@@ -38,11 +38,12 @@ function getMaxContextChars(model: string): number {
 const FALLBACK_CHAT_MODEL = 'gpt-4o';
 
 const SYSTEM_PROMPT = `Você é um assistente especializado em atestados de execução de obras.
-Responda SOMENTE com base nos trechos de documentos fornecidos abaixo.
-Se a informação solicitada não estiver presente nos trechos, responda exatamente: "${NOT_FOUND_MESSAGE}"
+Responda SOMENTE com base nos trechos de documentos e nas tabelas de serviços fornecidos abaixo.
+Se a informação solicitada não estiver presente no contexto, responda exatamente: "${NOT_FOUND_MESSAGE}"
 Não invente dados, valores, datas, nomes ou quantidades.
-Ao citar um dado, sempre indique o documento de origem no formato [Fonte: <filename>, p.<pagina>].
-Cite cada fonte individualmente com seu próprio colchete. Nunca agrupe múltiplas fontes no mesmo colchete com ponto e vírgula.`;
+Ao citar um dado de um trecho de documento ou tabela de serviços, sempre indique a origem no formato [Fonte: <filename>, p.<pagina>].
+Cite cada fonte individualmente com seu próprio colchete. Nunca agrupe múltiplas fontes no mesmo colchete com ponto e vírgula.
+As seções marcadas com [Fonte: ...] são fontes válidas — use-as para responder.`;
 
 type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO';
 
@@ -284,14 +285,27 @@ export class ReasoningEngineService {
   }
 
   private buildServiceContextTable(results: ServiceContextResult[]): string {
-    const header = '| Atestado | Descrição | Quantidade | Unidade | Categoria |\n|---|---|---|---|---|';
-    const body = results
-      .map(
-        (r) =>
-          `| ${r.filename} | ${r.descricao} | ${r.quantidade ?? '-'} | ${r.unidade ?? '-'} | ${r.categoria ?? '-'} |`,
-      )
-      .join('\n');
-    return `${header}\n${body}`;
+    // Group by filename so each atestado becomes its own [Fonte:] block
+    const byFile = new Map<string, ServiceContextResult[]>();
+    for (const r of results) {
+      const list = byFile.get(r.filename) ?? [];
+      list.push(r);
+      byFile.set(r.filename, list);
+    }
+
+    const parts: string[] = [];
+    for (const [filename, items] of byFile) {
+      const rows = items
+        .map((r) => {
+          const qty = r.quantidade != null ? ` — ${r.quantidade} ${r.unidade ?? ''}`.trimEnd() : '';
+          const cat = r.categoria ? ` [${r.categoria}]` : '';
+          return `• ${r.descricao}${qty}${cat}`;
+        })
+        .join('\n');
+      parts.push(`[Fonte: ${filename}, p.1]\nServiços executados neste atestado:\n${rows}`);
+    }
+
+    return parts.join('\n\n---\n\n');
   }
 
   private extractLocalidadeHint(query: string): string | undefined {
