@@ -23,23 +23,28 @@ export class IndexingService {
       if (chunks.length === 0) {
         this.logger.log(`No unembedded chunks for ${atestadoId}`);
       } else {
-        const texts = chunks.map((c) => c.content);
-        const embeddings = await this.embeddingService.embedTexts(texts);
+        const validChunks = chunks.filter((c) => c.content.trim().length > 0);
+        if (validChunks.length === 0) {
+          this.logger.warn(`All chunks are empty for ${atestadoId}, skipping embedding`);
+        } else {
+          const texts = validChunks.map((c) => c.content);
+          const embeddings = await this.embeddingService.embedTexts(texts);
 
-        await this.embeddingRepo.saveMany(
-          chunks.map((chunk, i) => ({
-            chunkId: chunk.id,
-            vector: this.embeddingService.toVectorLiteral(embeddings[i]),
-            metadata: {
-              atestadoId: chunk.atestadoId,
-              chunkIndex: chunk.chunkIndex,
-              pageNumber: chunk.pageNumber,
-              originalFilename: chunk.originalFilename,
-            },
-          })),
-        );
+          await this.embeddingRepo.saveMany(
+            validChunks.map((chunk, i) => ({
+              chunkId: chunk.id,
+              vector: this.embeddingService.toVectorLiteral(embeddings[i]),
+              metadata: {
+                atestadoId: chunk.atestadoId,
+                chunkIndex: chunk.chunkIndex,
+                pageNumber: chunk.pageNumber,
+                originalFilename: chunk.originalFilename,
+              },
+            })),
+          );
 
-        this.logger.log(`Saved ${chunks.length} embeddings for ${atestadoId}`);
+          this.logger.log(`Saved ${validChunks.length} embeddings for ${atestadoId}`);
+        }
       }
 
       await this.documentsApi.updateAtestadoStatus(atestadoId, AtestadoStatus.DONE);
