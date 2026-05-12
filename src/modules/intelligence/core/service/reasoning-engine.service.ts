@@ -45,6 +45,9 @@ Ao citar um dado de um trecho de documento ou tabela de serviços, sempre indiqu
 Cite cada fonte individualmente com seu próprio colchete. Nunca agrupe múltiplas fontes no mesmo colchete com ponto e vírgula.
 As seções marcadas com [Fonte: ...] são fontes válidas — use-as para responder.`;
 
+const LISTAGEM_EXTRA_INSTRUCTION = `
+Quando a pergunta solicitar QUAIS documentos ou acervos contêm um determinado item ou serviço, você DEVE enumerar EXPLICITAMENTE TODOS os documentos listados no contexto que contêm esse item. A seção "Documentos encontrados no contexto" lista todos os documentos disponíveis — cite cada um individualmente com [Fonte: <filename>, p.<pagina>]. Não omita, resuma nem agrupe documentos: cada documento deve aparecer separadamente na resposta.`;
+
 type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO';
 
 const QUANTITATIVO_KEYWORDS = /total|volume|quantidade|soma|quanto|somar|somatório|somatorio|medição|medicao|metragem|metros|ranking|frequente|maior|recorrente|demandado|acumulado|executado|some|custo|valor|valores|estado|cidade|localidade|piauí|piaui|bahia|ceará|ceara|maranhão|maranhao/i;
@@ -97,7 +100,7 @@ export class ReasoningEngineService {
     };
 
     try {
-      const { notFound, sources, context } = await this.buildContext(dto);
+      const { notFound, sources, context, intent } = await this.buildContext(dto);
 
       if (notFound) {
         emit({ type: 'text', content: NOT_FOUND_MESSAGE });
@@ -107,8 +110,9 @@ export class ReasoningEngineService {
         return;
       }
 
+      const systemContent = intent === 'LISTAGEM' ? SYSTEM_PROMPT + LISTAGEM_EXTRA_INSTRUCTION : SYSTEM_PROMPT;
       const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemContent },
         { role: 'user', content: `CONTEXTO:\n${context}\n\nPERGUNTA: ${dto.query}` },
       ];
 
@@ -138,7 +142,8 @@ export class ReasoningEngineService {
       }
 
       const isNotFound = fullResponse.includes(NOT_FOUND_MESSAGE);
-      const filteredSources = isNotFound ? [] : this.filterSourcesByResponse(this.deduplicateSources(sources), fullResponse);
+      const dedupedSources = this.deduplicateSources(sources);
+      const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, fullResponse));
       emit({ type: 'sources', sources: filteredSources });
       emit({ type: 'done' });
 
@@ -156,15 +161,16 @@ export class ReasoningEngineService {
   }
 
   async answer(dto: QueryDto): Promise<QueryAnswer> {
-    const { notFound, sources, context } = await this.buildContext(dto);
+    const { notFound, sources, context, intent } = await this.buildContext(dto);
 
     if (notFound) {
       await this.persistTurns(dto.query, NOT_FOUND_MESSAGE, dto.sessionId, []);
       return { answer: NOT_FOUND_MESSAGE, sources: [], notFound: true };
     }
 
+    const systemContent = intent === 'LISTAGEM' ? SYSTEM_PROMPT + LISTAGEM_EXTRA_INSTRUCTION : SYSTEM_PROMPT;
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemContent },
       { role: 'user', content: `CONTEXTO:\n${context}\n\nPERGUNTA: ${dto.query}` },
     ];
 
@@ -186,7 +192,8 @@ export class ReasoningEngineService {
 
     const text = completion.choices[0]?.message?.content ?? NOT_FOUND_MESSAGE;
     const isNotFound = text.includes(NOT_FOUND_MESSAGE);
-    const filteredSources = isNotFound ? [] : this.filterSourcesByResponse(this.deduplicateSources(sources), text);
+    const dedupedSources = this.deduplicateSources(sources);
+    const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, text));
     await this.persistTurns(dto.query, text, dto.sessionId, filteredSources);
 
     return { answer: text, sources: filteredSources, notFound: isNotFound };
@@ -197,6 +204,7 @@ export class ReasoningEngineService {
     chunks: RetrievedChunk[];
     sources: SourceRef[];
     context: string;
+    intent: QueryIntent;
   }> {
     const intent = this.detectIntent(dto.query);
 
@@ -219,10 +227,27 @@ export class ReasoningEngineService {
           `Top chunks: ${chunks.slice(0, 3).map((c) => `"${c.originalFilename}" p.${c.pageNumber} sim=${Number(c.similarity).toFixed(3)}`).join(' | ')}`,
         );
       }
-      return { notFound: true, chunks: [], sources: [], context: '' };
+      return { notFound: true, chunks: [], sources: [], context: '', intent };
     }
 
     const contextParts: string[] = [];
+
+    // For listing queries, prepend an enumeration of all matching documents as a checklist
+    // so the LLM knows about every document before reading the chunks
+    if (intent === 'LISTAGEM') {
+      const chunkFilenames = maxSimilarity >= this.similarityThreshold
+        ? chunks.map((c) => `- ${c.originalFilename} (p.${c.pageNumber})`)
+        : [];
+      const serviceFilenames = serviceResults
+        .reduce<string[]>((acc, r) => (acc.includes(r.filename) ? acc : [...acc, r.filename]), [])
+        .map((f) => `- ${f} (p.1)`);
+      const allEntries = [...new Set([...chunkFilenames, ...serviceFilenames])];
+      if (allEntries.length > 0) {
+        contextParts.push(
+          `**Documentos encontrados no contexto (${allEntries.length} total — cite TODOS na resposta):**\n${allEntries.join('\n')}`,
+        );
+      }
+    }
 
     // Add vector/keyword chunks that pass the threshold
     if (maxSimilarity >= this.similarityThreshold && chunks.length > 0) {
@@ -281,7 +306,7 @@ export class ReasoningEngineService {
     const sources: SourceRef[] = [...chunkSources, ...serviceSources];
     const context = this.truncateContext(contextParts.join('\n\n'));
 
-    return { notFound: false, chunks, sources, context };
+    return { notFound: false, chunks, sources, context, intent };
   }
 
   private buildServiceContextTable(results: ServiceContextResult[]): string {
