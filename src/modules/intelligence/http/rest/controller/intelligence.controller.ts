@@ -69,14 +69,32 @@ export class IntelligenceController {
 
   @Get('quantitativos')
   @ApiOperation({ summary: 'Agregações SQL de quantitativos executados' })
-  @ApiQuery({ name: 'descricao', required: false })
+  @ApiQuery({ name: 'descricao', required: false, description: 'Comma-separated descriptions (OR/AND via operador)' })
   @ApiQuery({ name: 'categoria', required: false })
   @ApiQuery({ name: 'obraId', required: false })
+  @ApiQuery({ name: 'localidade', required: false })
+  @ApiQuery({ name: 'operador', required: false, enum: ['AND', 'OR'] })
+  @ApiQuery({ name: 'minQuantidade', required: false })
   quantitativos(
     @Query('descricao') descricao?: string,
     @Query('categoria') categoria?: string,
     @Query('obraId') obraId?: string,
+    @Query('localidade') localidade?: string,
+    @Query('operador') operador?: string,
+    @Query('minQuantidade') minQuantidade?: string,
   ) {
-    return this.extractionApi.getQuantitativos({ descricao, categoria, obraId });
+    const descricoes = descricao
+      ? descricao.split(',').map((d) => d.trim()).filter(Boolean)
+      : undefined;
+
+    return this.extractionApi.getQuantitativos({
+      descricao: descricoes?.length === 1 ? descricoes[0] : undefined,
+      descricoes: descricoes && descricoes.length > 1 ? descricoes : undefined,
+      operador: operador === 'AND' ? 'AND' : 'OR',
+      categoria,
+      obraId,
+      localidade,
+      minQuantidade: minQuantidade ? parseFloat(minQuantidade) : undefined,
+    });
   }
 }

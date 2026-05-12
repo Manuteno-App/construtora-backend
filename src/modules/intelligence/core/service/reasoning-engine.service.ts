@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import OpenAI from 'openai';
 import { EXTRACTION_API, IExtractionApi } from '../../../extraction/public-api/interface/extraction-api.interface';
+import { ServiceContextResult } from '../../../extraction/persistence/repository/servico-executado.repository';
 import { ConversationRole } from '../../persistence/entity/conversation-turn.entity';
 import { ConversationTurnRepository } from '../../persistence/repository/conversation-turn.repository';
 import { HybridRetrieverService, RetrievalFilters, RetrievedChunk } from './hybrid-retriever.service';
@@ -45,7 +46,7 @@ Cite cada fonte individualmente com seu próprio colchete. Nunca agrupe múltipl
 
 type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO';
 
-const QUANTITATIVO_KEYWORDS = /total|volume|quantidade|soma|quanto|somar|somatório|medição|mais|ranking|frequente|maior|recorrente|demandado|acumulado|executado/i;
+const QUANTITATIVO_KEYWORDS = /total|volume|quantidade|soma|quanto|somar|somatório|somatorio|medição|medicao|metragem|metros|ranking|frequente|maior|recorrente|demandado|acumulado|executado|some|custo|valor|valores|estado|cidade|localidade|piauí|piaui|bahia|ceará|ceara|maranhão|maranhao/i;
 const LISTAGEM_KEYWORDS = /quais|liste|listar|enumere|relação de|relação das/i;
 
 export interface SourceRef {
@@ -197,10 +198,18 @@ export class ReasoningEngineService {
     context: string;
   }> {
     const intent = this.detectIntent(dto.query);
-    const chunks = await this.retriever.retrieve(dto.query, dto.filters);
+
+    // Run vector/keyword retrieval and direct SQL service search in parallel
+    const [chunks, serviceResults] = await Promise.all([
+      this.retriever.retrieve(dto.query, dto.filters),
+      this.extractionApi.searchServicosForContext(dto.query),
+    ]);
 
     const maxSimilarity = chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
-    if (maxSimilarity < this.similarityThreshold) {
+    const hasServiceResults = serviceResults.length > 0;
+
+    // Only bail out when BOTH retrieval paths yield nothing
+    if (maxSimilarity < this.similarityThreshold && !hasServiceResults) {
       if (chunks.length === 0) {
         this.logger.warn(`NotFound: retriever returned 0 chunks for query: "${dto.query}"`);
       } else {
@@ -214,14 +223,25 @@ export class ReasoningEngineService {
 
     const contextParts: string[] = [];
 
-    contextParts.push(
-      chunks
-        .map((c) => `[Fonte: ${c.originalFilename}, p.${c.pageNumber}]\n${c.content}`)
-        .join('\n\n---\n\n'),
-    );
+    // Add vector/keyword chunks that pass the threshold
+    if (maxSimilarity >= this.similarityThreshold && chunks.length > 0) {
+      contextParts.push(
+        chunks
+          .map((c) => `[Fonte: ${c.originalFilename}, p.${c.pageNumber}]\n${c.content}`)
+          .join('\n\n---\n\n'),
+      );
+    }
+
+    // Inject direct SQL service matches as a structured table
+    if (hasServiceResults) {
+      this.logger.log(`Direct service search found ${serviceResults.length} rows for query: "${dto.query}"`);
+      contextParts.push(`\n\n**Serviços encontrados diretamente no banco de dados:**\n${this.buildServiceContextTable(serviceResults)}`);
+    }
 
     if (intent === 'QUANTITATIVO') {
-      const table = await this.extractionApi.getAnalyticsAsMarkdown();
+      const localidade = this.extractLocalidadeHint(dto.query);
+      const categoria = this.extractCategoriaHint(dto.query);
+      const table = await this.extractionApi.getAnalyticsAsMarkdown({ localidade, categoria });
       if (table) contextParts.push(`\n\n**Dados analíticos (SQL):**\n${table}`);
     }
 
@@ -233,16 +253,59 @@ export class ReasoningEngineService {
       }
     }
 
-    const sources: SourceRef[] = chunks.map((c) => ({
-      atestadoId: c.atestadoId,
-      filename: c.originalFilename,
-      pagina: c.pageNumber,
-      trecho: c.content.slice(0, 200),
-    }));
+    // Sources: combine chunk sources + service-result sources
+    const chunkSources: SourceRef[] = maxSimilarity >= this.similarityThreshold
+      ? chunks.map((c) => ({
+          atestadoId: c.atestadoId,
+          filename: c.originalFilename,
+          pagina: c.pageNumber,
+          trecho: c.content.slice(0, 200),
+        }))
+      : [];
 
+    const seenAtestados = new Set<string>(chunkSources.map((s) => s.atestadoId));
+    const serviceSources: SourceRef[] = serviceResults
+      .filter((r) => !seenAtestados.has(r.atestadoId))
+      .reduce<ServiceContextResult[]>((acc, r) => {
+        if (!acc.find((x) => x.atestadoId === r.atestadoId)) acc.push(r);
+        return acc;
+      }, [])
+      .map((r) => ({
+        atestadoId: r.atestadoId,
+        filename: r.filename,
+        pagina: 1,
+        trecho: `${r.descricao}: ${r.quantidade ?? ''} ${r.unidade ?? ''}`.trim(),
+      }));
+
+    const sources: SourceRef[] = [...chunkSources, ...serviceSources];
     const context = this.truncateContext(contextParts.join('\n\n'));
 
     return { notFound: false, chunks, sources, context };
+  }
+
+  private buildServiceContextTable(results: ServiceContextResult[]): string {
+    const header = '| Atestado | Descrição | Quantidade | Unidade | Categoria |\n|---|---|---|---|---|';
+    const body = results
+      .map(
+        (r) =>
+          `| ${r.filename} | ${r.descricao} | ${r.quantidade ?? '-'} | ${r.unidade ?? '-'} | ${r.categoria ?? '-'} |`,
+      )
+      .join('\n');
+    return `${header}\n${body}`;
+  }
+
+  private extractLocalidadeHint(query: string): string | undefined {
+    const m = query.match(
+      /\b(piauí|piaui|maranhão|maranhao|bahia|ceará|ceara|pará|para|amazonas|tocantins|goiás|goias|minas gerais|são paulo|rio de janeiro|paraná|parana|santa catarina|rio grande do sul|mato grosso|espírito santo|espirito santo|alagoas|sergipe|pernambuco|paraíba|paraiba|rio grande do norte|rondônia|rondonia|acre|roraima|amapá|amapa|mato grosso do sul|df|pi|ma|ba|ce|sp|rj|mg|pr|sc|rs|mt|go|pa|am|to|es|al|se|pe|pb|rn|ro|ac|rr|ap|ms)\b/i,
+    );
+    return m?.[0];
+  }
+
+  private extractCategoriaHint(query: string): string | undefined {
+    const m = query.match(
+      /\b(terraplenagem|terraplanagem|paviment\w*|drenagem|estrutura|fundação|fundacao|concreto|asfalto|iluminação|iluminacao|saneamento|edificação|edificacao|movimentação|movimentacao)\b/i,
+    );
+    return m?.[0];
   }
 
   private isContextLengthError(err: unknown): boolean {
@@ -286,9 +349,12 @@ export class ReasoningEngineService {
         if (fm) cited.add(fm[1].trim().toLowerCase());
       }
     }
-    // If the LLM produced no parseable citations, fall back to all deduplicated sources
+    // No parseable citations → return all sources
     if (cited.size === 0) return sources;
-    return sources.filter((s) => cited.has(s.filename.toLowerCase()));
+    const matched = sources.filter((s) => cited.has(s.filename.toLowerCase()));
+    // If citations were parsed but none matched (e.g. LLM used truncated filename),
+    // fall back to all sources to ensure links are always shown.
+    return matched.length > 0 ? matched : sources;
   }
 
   private detectIntent(query: string): QueryIntent {

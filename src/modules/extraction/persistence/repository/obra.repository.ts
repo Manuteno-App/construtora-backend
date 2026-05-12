@@ -21,6 +21,13 @@ export interface EmpresaRankingRow {
   atestados: number;
 }
 
+export interface LocalidadeAggRow {
+  local: string;
+  totalObras: number;
+  somaValores: number | null;
+  atestados: number;
+}
+
 @Injectable()
 export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
   constructor(@InjectDataSource() dataSource: DataSource) {
@@ -54,6 +61,29 @@ export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
       LIMIT $1
       `,
       [limit],
+    );
+  }
+
+  async aggregateValoresByLocalidade(localidade?: string): Promise<LocalidadeAggRow[]> {
+    const params: unknown[] = [];
+    let whereClause = '';
+    if (localidade) {
+      params.push(`%${localidade}%`);
+      whereClause = `WHERE UPPER(o.local) LIKE UPPER($1)`;
+    }
+    params.push(20); // limit
+    return this.query<LocalidadeAggRow>(
+      `SELECT
+         o.local                              AS "local",
+         COUNT(DISTINCT o.id)::int           AS "totalObras",
+         SUM(o.valor)::float                 AS "somaValores",
+         COUNT(DISTINCT o.atestado_id)::int  AS "atestados"
+       FROM obras o
+       ${whereClause}
+       GROUP BY o.local
+       ORDER BY "atestados" DESC
+       LIMIT $${params.length}`,
+      params,
     );
   }
 }

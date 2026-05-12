@@ -1,9 +1,9 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
-import { EmbeddingService } from './embedding.service';
-import { EmbeddingRepository } from '../../persistence/repository/embedding.repository';
-import { IIngestionApi, INGESTION_API } from '../../../ingestion/public-api/interface/ingestion-api.interface';
-import { IDocumentsApi, DOCUMENTS_API } from '../../../documents/public-api/interface/documents-api.interface';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AtestadoStatus } from '../../../documents/persistence/entity/atestado.entity';
+import { DOCUMENTS_API, IDocumentsApi } from '../../../documents/public-api/interface/documents-api.interface';
+import { IIngestionApi, INGESTION_API } from '../../../ingestion/public-api/interface/ingestion-api.interface';
+import { EmbeddingRepository } from '../../persistence/repository/embedding.repository';
+import { EmbeddingService } from './embedding.service';
 
 @Injectable()
 export class IndexingService {
