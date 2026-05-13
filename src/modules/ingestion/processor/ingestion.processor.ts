@@ -12,8 +12,8 @@ import { ChunkRepository, CreateChunkData } from '../persistence/repository/chun
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse');
 
-const TARGET_CHUNK_TOKENS = 512;
-const CHUNK_OVERLAP_TOKENS = 50;
+const TARGET_CHUNK_TOKENS = 800;
+const CHUNK_OVERLAP_TOKENS = 75;
 
 export interface IngestionJobPayload {
   atestadoId: string;
@@ -82,7 +82,7 @@ export class IngestionProcessor extends WorkerHost {
 
         const tabelaServicos = this.tableExtractor.extractBest(ocrResult);
         fullText = this.preProcess(fullText);
-        const chunks = this.buildChunks(fullText, pages, atestado.originalFilename);
+        const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
         const savedChunks = await this.chunkRepo.saveMany(
           chunks.map((c, i): CreateChunkData => ({
             atestadoId,
@@ -107,7 +107,7 @@ export class IngestionProcessor extends WorkerHost {
 
       fullText = this.preProcess(fullText);
       const tabelaServicos = this.tableExtractor.extract(fullText);
-      const chunks = this.buildChunks(fullText, pages, atestado.originalFilename);
+      const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
       const savedChunks = await this.chunkRepo.saveMany(
         chunks.map((c, i): CreateChunkData => ({
           atestadoId,
@@ -147,8 +147,31 @@ export class IngestionProcessor extends WorkerHost {
   private buildChunks(
     text: string,
     pages: Array<{ pageNumber: number; text: string }>,
-    _filename: string,
+    filename: string,
+    metadata?: Record<string, string>,
   ): Array<{ content: string; pageNumber: number }> {
+    // Build a metadata header to prepend to each chunk so the embedding
+    // captures document-level context (filename, obra, location, company).
+    const metaParts: string[] = [`Arquivo: ${filename}`];
+    if (metadata) {
+      const keys: Array<[string, string]> = [
+        ['nome_obra', 'Obra'],
+        ['obra', 'Obra'],
+        ['local', 'Local'],
+        ['localidade', 'Local'],
+        ['estado', 'Estado'],
+        ['empresa_contratante', 'Contratante'],
+        ['contratante', 'Contratante'],
+        ['empresa_contratada', 'Contratada'],
+        ['contratada', 'Contratada'],
+      ];
+      for (const [key, label] of keys) {
+        const val = metadata[key];
+        if (val) metaParts.push(`${label}: ${val}`);
+      }
+    }
+    const metaHeader = `[${metaParts.join(' | ')}]`;
+
     const paragraphs = text.split(/\n\n+/);
     const result: Array<{ content: string; pageNumber: number }> = [];
     let current = '';
@@ -161,7 +184,7 @@ export class IngestionProcessor extends WorkerHost {
       const paraPage = this.findPageForText(para, pages) ?? currentPage;
 
       if (approxTokens(current + '\n\n' + para) > TARGET_CHUNK_TOKENS && current) {
-        result.push({ content: current.trim(), pageNumber: currentPage });
+        result.push({ content: `${metaHeader}\n${current.trim()}`, pageNumber: currentPage });
         const overlapChars = CHUNK_OVERLAP_TOKENS * 4;
         current = current.slice(-overlapChars) + '\n\n' + para;
         currentPage = paraPage;
@@ -172,10 +195,10 @@ export class IngestionProcessor extends WorkerHost {
     }
 
     if (current.trim()) {
-      result.push({ content: current.trim(), pageNumber: currentPage });
+      result.push({ content: `${metaHeader}\n${current.trim()}`, pageNumber: currentPage });
     }
 
-    return result.length > 0 ? result : [{ content: text.slice(0, 2000), pageNumber: 1 }];
+    return result.length > 0 ? result : [{ content: `${metaHeader}\n${text.slice(0, 2000)}`, pageNumber: 1 }];
   }
 
   private findPageForText(

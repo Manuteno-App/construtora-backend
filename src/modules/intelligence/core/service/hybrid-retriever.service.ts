@@ -1,16 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { RetrievedChunk } from '../../../indexing/persistence/repository/embedding.repository';
+import type { RetrievedChunk, SearchFilters } from '../../../indexing/persistence/repository/embedding.repository';
 import { IIndexingApi, INDEXING_API } from '../../../indexing/public-api/interface/indexing-api.interface';
 
 export { RetrievedChunk };
 
-export interface RetrievalFilters {
-  estado?: string;
-  periodo?: { de: string; ate: string };
-  obraId?: string;
-  empresaId?: string;
-}
+// Re-export SearchFilters as RetrievalFilters for backward compatibility
+export type RetrievalFilters = SearchFilters;
 
 @Injectable()
 export class HybridRetrieverService {
@@ -24,22 +20,25 @@ export class HybridRetrieverService {
     this.topK = config.get<number>('rag.topK') ?? 10;
   }
 
-  async retrieve(query: string, _filters?: RetrievalFilters): Promise<RetrievedChunk[]> {
+  async retrieve(query: string, filters?: RetrievalFilters, intent?: 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO'): Promise<RetrievedChunk[]> {
+    const effectiveTopK = intent === 'LISTAGEM' ? Math.max(this.topK, 30) : this.topK;
+
     const keywords = this.extractKeywords(query);
     const specificKeywords = this.extractSpecificKeywords(query);
-    this.logger.log(`Keywords: [${keywords.join(', ')}]  Specific: [${specificKeywords.join(', ')}]`);
+    this.logger.log(`Keywords: [${keywords.join(', ')}]  Specific: [${specificKeywords.join(', ')}]  effectiveTopK: ${effectiveTopK}`);
 
     const queryVector = await this.indexingApi.embedText(query);
     const vectorLiteral = this.indexingApi.toVectorLiteral(queryVector);
 
-    const [vectorRows, keywordRows, strictRows] = await Promise.all([
-      this.indexingApi.searchSimilar(vectorLiteral, this.topK),
+    const [vectorRows, keywordRows, strictRows, fullTextRows] = await Promise.all([
+      this.indexingApi.searchSimilar(vectorLiteral, effectiveTopK, filters),
       keywords.length > 0
-        ? this.indexingApi.keywordSearch(keywords, this.topK)
+        ? this.indexingApi.keywordSearch(keywords, effectiveTopK, filters)
         : Promise.resolve<RetrievedChunk[]>([]),
       specificKeywords.length >= 2
-        ? this.indexingApi.strictKeywordSearch(specificKeywords, this.topK)
+        ? this.indexingApi.strictKeywordSearch(specificKeywords, effectiveTopK, filters)
         : Promise.resolve<RetrievedChunk[]>([]),
+      this.indexingApi.fullTextSearch(query, effectiveTopK, filters),
     ]);
 
     const merged = new Map<string, RetrievedChunk>();
@@ -60,6 +59,19 @@ export class HybridRetrieverService {
       }
     }
 
+    // Full-text search (tsvector): +0.1 boost over keyword-only
+    for (const row of fullTextRows) {
+      const existing = merged.get(row.chunkId);
+      if (!existing) {
+        merged.set(row.chunkId, { ...row, similarity: 0.6 });
+      } else {
+        merged.set(row.chunkId, {
+          ...existing,
+          similarity: Math.min(1, existing.similarity + 0.1),
+        });
+      }
+    }
+
     // Strict AND matches get the highest boost — these are the most relevant
     for (const row of strictRows) {
       const existing = merged.get(row.chunkId);
@@ -73,18 +85,35 @@ export class HybridRetrieverService {
       }
     }
 
-    const result = Array.from(merged.values())
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, this.topK);
+    const sorted = Array.from(merged.values()).sort((a, b) => b.similarity - a.similarity);
+
+    // MMR: cap chunks per document to avoid context dominated by a single atestado.
+    // Disabled for LISTAGEM so every document remains visible.
+    const MAX_CHUNKS_PER_DOC = 3;
+    let result: RetrievedChunk[];
+    if (intent === 'LISTAGEM') {
+      result = sorted.slice(0, effectiveTopK);
+    } else {
+      const docCount = new Map<string, number>();
+      result = [];
+      for (const chunk of sorted) {
+        const count = docCount.get(chunk.atestadoId) ?? 0;
+        if (count < MAX_CHUNKS_PER_DOC) {
+          result.push(chunk);
+          docCount.set(chunk.atestadoId, count + 1);
+        }
+        if (result.length >= effectiveTopK) break;
+      }
+    }
 
     if (result.length > 0) {
       const scores = result.map((r) => Number(r.similarity).toFixed(3)).join(', ');
       this.logger.log(
-        `Hybrid retrieve: ${vectorRows.length} vector + ${keywordRows.length} keyword + ${strictRows.length} strict → ${result.length} final. Similarities: [${scores}]`,
+        `Hybrid retrieve: ${vectorRows.length} vector + ${keywordRows.length} keyword + ${strictRows.length} strict + ${fullTextRows.length} fulltext → ${result.length} final. Similarities: [${scores}]`,
       );
     } else {
       this.logger.warn(
-        `No chunks found — vector=${vectorRows.length}, keyword=${keywordRows.length}, strict=${strictRows.length}. Keywords: [${keywords.join(', ')}].`,
+        `No chunks found — vector=${vectorRows.length}, keyword=${keywordRows.length}, strict=${strictRows.length}, fulltext=${fullTextRows.length}. Keywords: [${keywords.join(', ')}].`,
       );
     }
 

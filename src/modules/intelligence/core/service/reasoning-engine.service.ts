@@ -208,10 +208,14 @@ export class ReasoningEngineService {
   }> {
     const intent = this.detectIntent(dto.query);
 
+    // Rewrite query for better retrieval recall, then use it only for retrieval paths.
+    // The original query is kept for the LLM prompt and conversation persistence.
+    const retrievalQuery = await this.rewriteQueryForRetrieval(dto.query);
+
     // Run vector/keyword retrieval and direct SQL service search in parallel
     const [chunks, serviceResults] = await Promise.all([
-      this.retriever.retrieve(dto.query, dto.filters),
-      this.extractionApi.searchServicosForContext(dto.query),
+      this.retriever.retrieve(retrievalQuery, dto.filters, intent),
+      this.extractionApi.searchServicosForContext(retrievalQuery),
     ]);
 
     const maxSimilarity = chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
@@ -400,6 +404,41 @@ export class ReasoningEngineService {
     if (QUANTITATIVO_KEYWORDS.test(query)) return 'QUANTITATIVO';
     if (LISTAGEM_KEYWORDS.test(query)) return 'LISTAGEM';
     return 'NARRATIVO';
+  }
+
+  /**
+   * Rewrites the user's natural-language query into technical construction
+   * vocabulary to improve vector and keyword retrieval recall.
+   * Uses the original query as fallback if the LLM call fails.
+   */
+  private async rewriteQueryForRetrieval(query: string): Promise<string> {
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        stream: false,
+        temperature: 0,
+        max_tokens: 150,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Você é um especialista em engenharia civil e contratos de obras públicas no Brasil. ' +
+              'Reescreva a consulta do usuário usando terminologia técnica de obras (terraplenagem, ' +
+              'pavimentação, drenagem, estruturas, etc.) e expandindo abreviações e siglas de estados. ' +
+              'Mantenha o significado original. Responda APENAS com a consulta reescrita, sem explicações.',
+          },
+          { role: 'user', content: query },
+        ],
+      });
+      const rewritten = completion.choices[0]?.message?.content?.trim();
+      if (rewritten && rewritten.length > 0) {
+        this.logger.log(`Query rewrite: "${query}" → "${rewritten}"`);
+        return rewritten;
+      }
+    } catch (err) {
+      this.logger.warn(`Query rewrite failed, using original: ${err}`);
+    }
+    return query;
   }
 
   private async persistTurns(

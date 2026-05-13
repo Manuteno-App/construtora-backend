@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { EmbeddingService } from '../../core/service/embedding.service';
-import { EmbeddingRepository, RetrievedChunk } from '../../persistence/repository/embedding.repository';
+import { EmbeddingRepository, RetrievedChunk, SearchFilters } from '../../persistence/repository/embedding.repository';
 import { IIndexingApi } from '../interface/indexing-api.interface';
 
 @Injectable()
@@ -22,15 +22,19 @@ export class IndexingFacade implements IIndexingApi {
     return this.embeddingService.toVectorLiteral(embedding);
   }
 
-  searchSimilar(vectorLiteral: string, limit: number): Promise<RetrievedChunk[]> {
-    return this.embeddingRepo.vectorSearch(vectorLiteral, limit);
+  searchSimilar(vectorLiteral: string, limit: number, filters?: SearchFilters): Promise<RetrievedChunk[]> {
+    return this.embeddingRepo.vectorSearch(vectorLiteral, limit, filters);
   }
 
-  keywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]> {
-    return this.embeddingRepo.keywordSearch(keywords, limit);
+  keywordSearch(keywords: string[], limit: number, filters?: SearchFilters): Promise<RetrievedChunk[]> {
+    return this.embeddingRepo.keywordSearch(keywords, limit, filters);
   }
 
-  strictKeywordSearch(keywords: string[], limit: number): Promise<RetrievedChunk[]> {
-    return this.embeddingRepo.strictKeywordSearch(keywords, limit);
+  strictKeywordSearch(keywords: string[], limit: number, filters?: SearchFilters): Promise<RetrievedChunk[]> {
+    return this.embeddingRepo.strictKeywordSearch(keywords, limit, filters);
+  }
+
+  fullTextSearch(query: string, limit: number, filters?: SearchFilters): Promise<RetrievedChunk[]> {
+    return this.embeddingRepo.fullTextSearch(query, limit, filters);
   }
 }
