@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { ObraRepository } from '../../persistence/repository/obra.repository';
-import { EmpresaRepository } from '../../persistence/repository/empresa.repository';
-import { ContratoRepository } from '../../persistence/repository/contrato.repository';
-import { ServicoExecutadoRepository } from '../../persistence/repository/servico-executado.repository';
-import { EmpresaTipo } from '../../persistence/entity/empresa.entity';
 import type { ServicoItem } from '../../../ingestion/core/service/table-extractor.service';
+import { EmpresaTipo } from '../../persistence/entity/empresa.entity';
+import { ContratoRepository } from '../../persistence/repository/contrato.repository';
+import { EmpresaRepository } from '../../persistence/repository/empresa.repository';
+import { ObraRepository } from '../../persistence/repository/obra.repository';
+import { ServicoExecutadoRepository } from '../../persistence/repository/servico-executado.repository';
 
 export interface ExtractedEntities {
   obra?: {
