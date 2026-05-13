@@ -29,6 +29,14 @@ export class EntityOrchestrationService {
     private readonly servicoRepo: ServicoExecutadoRepository,
   ) {}
 
+  /** Safely parse a date string returned by the LLM.
+   * Returns undefined for null literals, empty strings, and invalid dates. */
+  private parseDate(val?: string): Date | undefined {
+    if (!val || val === 'null' || val === 'undefined' || val.trim() === '') return undefined;
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? undefined : d;
+  }
+
   async persistExtractedEntities(
     entities: ExtractedEntities,
     atestadoId: string,
@@ -42,8 +50,8 @@ export class EntityOrchestrationService {
         nome: entities.obra.nome,
         local: entities.obra.local,
         tipo: entities.obra.tipo,
-        dataInicio: entities.obra.dataInicio ? new Date(entities.obra.dataInicio) : undefined,
-        dataFim: entities.obra.dataFim ? new Date(entities.obra.dataFim) : undefined,
+        dataInicio: this.parseDate(entities.obra.dataInicio),
+        dataFim: this.parseDate(entities.obra.dataFim),
         valor: entities.obra.valor,
         art: entities.obra.art,
       });
@@ -62,7 +70,7 @@ export class EntityOrchestrationService {
               obraId: obra.id,
               empresaId: empresa.id,
               numero: entities.contrato.numero,
-              data: entities.contrato.data ? new Date(entities.contrato.data) : undefined,
+              data: this.parseDate(entities.contrato.data),
               valor: entities.contrato.valor,
             });
           }
