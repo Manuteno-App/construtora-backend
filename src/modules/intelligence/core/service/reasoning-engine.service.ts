@@ -46,7 +46,11 @@ Cite cada fonte individualmente com seu próprio colchete. Nunca agrupe múltipl
 As seções marcadas com [Fonte: ...] são fontes válidas — use-as para responder.`;
 
 const LISTAGEM_EXTRA_INSTRUCTION = `
-Quando a pergunta solicitar QUAIS documentos ou acervos contêm um determinado item ou serviço, você DEVE enumerar EXPLICITAMENTE TODOS os documentos listados no contexto que contêm esse item. A seção "Documentos encontrados no contexto" lista todos os documentos disponíveis — cite cada um individualmente com [Fonte: <filename>, p.<pagina>]. Não omita, resuma nem agrupe documentos: cada documento deve aparecer separadamente na resposta.`;
+Quando a pergunta solicitar QUAIS documentos ou acervos contêm um determinado item ou serviço:
+- Responda em UMA ÚNICA frase confirmando quantos documentos foram encontrados com esse item.
+- NÃO enumere nem liste os nomes dos documentos no texto da resposta — os links já serão exibidos ao usuário automaticamente.
+- Para cada documento, insira apenas a citação inline no formato [Fonte: <filename>, p.<pagina>] — uma por documento, sem agrupar.
+- Não repita o nome do documento fora do colchete [Fonte:].`;
 
 type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO';
 
