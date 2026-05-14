@@ -237,9 +237,11 @@ export class ReasoningEngineService {
     }
 
     // Run all retrieval paths in parallel
+    // NOTE: searchServicosForContext uses the ORIGINAL query (not rewritten) because SQL ILIKE
+    // matching works best with the user's exact terms. The rewrite is only useful for vector search.
     const [chunks, serviceResults, qtyMatches, obrasResults, comprovacaoMatches] = await Promise.all([
       this.retriever.retrieve(retrievalQuery, dto.filters, intent),
-      this.extractionApi.searchServicosForContext(retrievalQuery),
+      this.extractionApi.searchServicosForContext(dto.query),
       qtyHint
         ? this.extractionApi.findAtestadosComTodosServicos([qtyHint.serviceQuery], qtyHint.minQuantidade)
         : Promise.resolve<{ atestadoId: string; filename: string }[]>([]),
@@ -607,11 +609,18 @@ export class ReasoningEngineService {
         if (fm) cited.add(fm[1].trim().toLowerCase());
       }
     }
-    // No parseable citations → return all sources
+    // No parseable citations — return all sources
     if (cited.size === 0) return sources;
-    const matched = sources.filter((s) => cited.has(s.filename.toLowerCase()));
-    // If citations were parsed but none matched (e.g. LLM used truncated filename),
-    // fall back to all sources to ensure links are always shown.
+    // Match sources against cited filenames using substring matching:
+    // the LLM may write a shortened or slightly different version of the filename.
+    const matched = sources.filter((s) => {
+      const fn = s.filename.toLowerCase();
+      for (const c of cited) {
+        if (fn === c || fn.includes(c) || c.includes(fn)) return true;
+      }
+      return false;
+    });
+    // If citations were parsed but none matched, fall back to all sources.
     return matched.length > 0 ? matched : sources;
   }
 
