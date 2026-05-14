@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import OpenAI from 'openai';
 import { ServiceContextResult } from '../../../extraction/persistence/repository/servico-executado.repository';
-import { EXTRACTION_API, IExtractionApi } from '../../../extraction/public-api/interface/extraction-api.interface';
+import { EXTRACTION_API, IExtractionApi, ServicoFilter } from '../../../extraction/public-api/interface/extraction-api.interface';
 import { ConversationRole } from '../../persistence/entity/conversation-turn.entity';
 import { ConversationTurnRepository } from '../../persistence/repository/conversation-turn.repository';
 import { HybridRetrieverService, RetrievalFilters, RetrievedChunk } from './hybrid-retriever.service';
@@ -52,8 +52,9 @@ Quando a pergunta solicitar QUAIS documentos ou acervos contêm um determinado i
 - Para cada documento, insira apenas a citação inline no formato [Fonte: <filename>, p.<pagina>] — uma por documento, sem agrupar.
 - Não repita o nome do documento fora do colchete [Fonte:].`;
 
-type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO';
+type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO' | 'COMPROVACAO';
 
+const COMPROVACAO_KEYWORDS = /comprov[ae]|comprovação|comprovacao|demonstr[ae]|qualificação|qualificacao|habilit[ae]|habilitação|habilitacao|atesta que|acervo técnico|acervo tecnico/i;
 const QUANTITATIVO_KEYWORDS = /total|volume|quantidade|soma|quanto|somar|somatório|somatorio|medição|medicao|metragem|metros|ranking|frequente|maior|recorrente|demandado|acumulado|executado|some|custo|valor|valores|estado|cidade|localidade|piauí|piaui|bahia|ceará|ceara|maranhão|maranhao/i;
 const LISTAGEM_KEYWORDS = /quais|liste|listar|enumere|relação de|relação das/i;
 
@@ -147,7 +148,9 @@ export class ReasoningEngineService {
 
       const isNotFound = fullResponse.includes(NOT_FOUND_MESSAGE);
       const dedupedSources = this.deduplicateSources(sources);
-      const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, fullResponse));
+      // LISTAGEM, QUANTITATIVO and COMPROVACAO: always expose all retrieved sources — the LLM narrates/sums
+      // without citing every individual [Fonte:] bracket, so response-filtering would drop valid sources.
+      const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' || intent === 'QUANTITATIVO' || intent === 'COMPROVACAO') ? dedupedSources : this.filterSourcesByResponse(dedupedSources, fullResponse);
       emit({ type: 'sources', sources: filteredSources });
       emit({ type: 'done' });
 
@@ -197,7 +200,8 @@ export class ReasoningEngineService {
     const text = completion.choices[0]?.message?.content ?? NOT_FOUND_MESSAGE;
     const isNotFound = text.includes(NOT_FOUND_MESSAGE);
     const dedupedSources = this.deduplicateSources(sources);
-    const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, text));
+    // LISTAGEM, QUANTITATIVO and COMPROVACAO: always expose all retrieved sources.
+    const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' || intent === 'QUANTITATIVO' || intent === 'COMPROVACAO') ? dedupedSources : this.filterSourcesByResponse(dedupedSources, text);
     await this.persistTurns(dto.query, text, dto.sessionId, filteredSources);
 
     return { answer: text, sources: filteredSources, notFound: isNotFound };
@@ -216,17 +220,45 @@ export class ReasoningEngineService {
     // The original query is kept for the LLM prompt and conversation persistence.
     const retrievalQuery = await this.rewriteQueryForRetrieval(dto.query);
 
-    // Run vector/keyword retrieval and direct SQL service search in parallel
-    const [chunks, serviceResults] = await Promise.all([
+    // Extract minimum-quantity hint so the SQL call can run in parallel with vector retrieval
+    const qtyHint = this.extractQuantidadeMinima(dto.query);
+
+    // Extract obra-level filters (localidades, minValor, tipo) for state/value queries
+    const localidades = this.extractLocalidades(dto.query);
+    const minValor = this.extractMinValor(dto.query);
+    const tipoObra = this.extractTipoObra(dto.query);
+    const hasObraFilter = localidades.length > 0 || minValor !== undefined || tipoObra !== undefined;
+
+    // For COMPROVACAO queries, extract services via LLM before running SQL (can't parallelize)
+    let servicosFiltros: ServicoFilter[] = [];
+    if (intent === 'COMPROVACAO') {
+      servicosFiltros = await this.extractServicosComQuantidades(dto.query);
+      this.logger.log(`COMPROVACAO: extracted ${servicosFiltros.length} service filters`);
+    }
+
+    // Run all retrieval paths in parallel
+    const [chunks, serviceResults, qtyMatches, obrasResults, comprovacaoMatches] = await Promise.all([
       this.retriever.retrieve(retrievalQuery, dto.filters, intent),
       this.extractionApi.searchServicosForContext(retrievalQuery),
+      qtyHint
+        ? this.extractionApi.findAtestadosComTodosServicos([qtyHint.serviceQuery], qtyHint.minQuantidade)
+        : Promise.resolve<{ atestadoId: string; filename: string }[]>([]),
+      hasObraFilter
+        ? this.extractionApi.findObrasForContext({ localidades, tipo: tipoObra, minValor })
+        : Promise.resolve<import('../../../extraction/persistence/repository/obra.repository').ObraContextRow[]>([]),
+      servicosFiltros.length > 0
+        ? this.extractionApi.findAtestadosComServicosFilter(servicosFiltros)
+        : Promise.resolve<{ atestadoId: string; filename: string }[]>([]),
     ]);
 
     const maxSimilarity = chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
     const hasServiceResults = serviceResults.length > 0;
+    const hasQtyResults = qtyMatches.length > 0;
+    const hasObrasResults = obrasResults.length > 0;
+    const hasComprovacaoResults = comprovacaoMatches.length > 0;
 
-    // Only bail out when BOTH retrieval paths yield nothing
-    if (maxSimilarity < this.similarityThreshold && !hasServiceResults) {
+    // Only bail out when ALL retrieval paths yield nothing
+    if (maxSimilarity < this.similarityThreshold && !hasServiceResults && !hasQtyResults && !hasObrasResults && !hasComprovacaoResults) {
       if (chunks.length === 0) {
         this.logger.warn(`NotFound: retriever returned 0 chunks for query: "${dto.query}"`);
       } else {
@@ -249,12 +281,33 @@ export class ReasoningEngineService {
       const serviceFilenames = serviceResults
         .reduce<string[]>((acc, r) => (acc.includes(r.filename) ? acc : [...acc, r.filename]), [])
         .map((f) => `- ${f} (p.1)`);
-      const allEntries = [...new Set([...chunkFilenames, ...serviceFilenames])];
+      const qtyFilenames = qtyHint && hasQtyResults
+        ? qtyMatches.map((r) => `- ${r.filename} (quantidade >= ${qtyHint.minQuantidade})`)
+        : [];
+      const allEntries = [...new Set([...chunkFilenames, ...serviceFilenames, ...qtyFilenames])];
       if (allEntries.length > 0) {
         contextParts.push(
           `**Documentos encontrados no contexto (${allEntries.length} total — cite TODOS na resposta):**\n${allEntries.join('\n')}`,
         );
       }
+      if (qtyHint && hasQtyResults) {
+        this.logger.log(`Quantity filter found ${qtyMatches.length} atestados with "${qtyHint.serviceQuery}" >= ${qtyHint.minQuantidade}`);
+        contextParts.push(
+          qtyMatches
+            .map((r) => `[Fonte: ${r.filename}, p.1]\nServiço "${qtyHint.serviceQuery}" executado neste atestado com quantidade >= ${qtyHint.minQuantidade}`)
+            .join('\n\n---\n\n'),
+        );
+      }
+    }
+
+    // For non-LISTAGEM intents: if a quantity filter matched, inject those atestados into context
+    if (intent !== 'LISTAGEM' && qtyHint && hasQtyResults) {
+      this.logger.log(`Quantity filter found ${qtyMatches.length} atestados with "${qtyHint.serviceQuery}" >= ${qtyHint.minQuantidade}`);
+      contextParts.push(
+        qtyMatches
+          .map((r) => `[Fonte: ${r.filename}, p.1]\nServiço "${qtyHint.serviceQuery}" executado neste atestado com quantidade >= ${qtyHint.minQuantidade}`)
+          .join('\n\n---\n\n'),
+      );
     }
 
     // Add vector/keyword chunks that pass the threshold
@@ -279,6 +332,39 @@ export class ReasoningEngineService {
       if (table) contextParts.push(`\n\n**Dados analíticos (SQL):**\n${table}`);
     }
 
+    // Obras context: inject for QUANTITATIVO and LISTAGEM when localidade/valor/tipo filters are present
+    if ((intent === 'QUANTITATIVO' || intent === 'LISTAGEM') && hasObrasResults) {
+      this.logger.log(`Obras context: ${obrasResults.length} obras found for localidades=[${localidades.join(', ')}] minValor=${minValor} tipo=${tipoObra}`);
+      const obraBlocks = obrasResults.map((o) => {
+        const valor = o.valor != null ? ` | Valor: R$ ${o.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '';
+        const local = o.local ? ` | Local: ${o.local}` : '';
+        const tipo = o.tipo ? ` | Tipo: ${o.tipo}` : '';
+        return `[Fonte: ${o.filename}, p.1]\nObra: ${o.nome}${local}${tipo}${valor}`;
+      });
+      contextParts.push(`\n\n**Obras encontradas no banco de dados:**\n${obraBlocks.join('\n\n---\n\n')}`);
+    }
+
+    // COMPROVACAO context: inject matching atestados and the service requirements
+    if (intent === 'COMPROVACAO') {
+      if (hasComprovacaoResults) {
+        this.logger.log(`COMPROVACAO: ${comprovacaoMatches.length} qualifying atestados found`);
+        const reqList = servicosFiltros
+          .map((s) => `• ${s.descricao}${s.minQuantidade !== undefined ? ` — mínimo: ${s.minQuantidade}` : ''}`)
+          .join('\n');
+        const atestadoBlocks = comprovacaoMatches
+          .map((r) => `[Fonte: ${r.filename}, p.1]\nEste atestado satisfaz os seguintes requisitos:\n${reqList}`)
+          .join('\n\n---\n\n');
+        contextParts.push(
+          `\n\n**Atestados que comprovam os requisitos solicitados (${comprovacaoMatches.length} encontrados):**\n${atestadoBlocks}`,
+        );
+      } else if (servicosFiltros.length > 0) {
+        this.logger.warn(`COMPROVACAO: no atestado found satisfying all ${servicosFiltros.length} service filters`);
+        contextParts.push(
+          `\n\n**Comprovação:** Nenhum atestado isolado foi encontrado que satisfaça simultaneamente todos os requisitos solicitados com as quantidades mínimas indicadas.`,
+        );
+      }
+    }
+
     if (dto.sessionId) {
       const history = await this.turnRepo.findRecentBySessionId(dto.sessionId, 5);
       if (history.length > 0) {
@@ -287,7 +373,7 @@ export class ReasoningEngineService {
       }
     }
 
-    // Sources: combine chunk sources + service-result sources
+    // Sources: combine chunk sources + service-result sources + quantity-filter sources
     const chunkSources: SourceRef[] = maxSimilarity >= this.similarityThreshold
       ? chunks.map((c) => ({
           atestadoId: c.atestadoId,
@@ -311,7 +397,46 @@ export class ReasoningEngineService {
         trecho: `${r.descricao}: ${r.quantidade ?? ''} ${r.unidade ?? ''}`.trim(),
       }));
 
-    const sources: SourceRef[] = [...chunkSources, ...serviceSources];
+    const allSeenAtestados = new Set<string>([...chunkSources, ...serviceSources].map((s) => s.atestadoId));
+    const qtySources: SourceRef[] = qtyHint
+      ? qtyMatches
+          .filter((r) => !allSeenAtestados.has(r.atestadoId))
+          .map((r) => ({
+            atestadoId: r.atestadoId,
+            filename: r.filename,
+            pagina: 1,
+            trecho: `${qtyHint.serviceQuery} — quantidade >= ${qtyHint.minQuantidade}`,
+          }))
+      : [];
+
+    // Obras sources (Phase 2)
+    const seenForObras = new Set<string>([...chunkSources, ...serviceSources, ...qtySources].map((s) => s.atestadoId));
+    const obraSources: SourceRef[] = obrasResults
+      .filter((r) => !seenForObras.has(r.atestadoId))
+      .reduce<typeof obrasResults>((acc, r) => {
+        if (!acc.find((x) => x.atestadoId === r.atestadoId)) acc.push(r);
+        return acc;
+      }, [])
+      .map((r) => ({
+        atestadoId: r.atestadoId,
+        filename: r.filename,
+        pagina: 1,
+        trecho: [r.nome, r.local, r.tipo, r.valor != null ? `R$ ${r.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : null]
+          .filter(Boolean).join(' | '),
+      }));
+
+    // Comprovação sources (Phase 3)
+    const seenForComprovacao = new Set<string>([...chunkSources, ...serviceSources, ...qtySources, ...obraSources].map((s) => s.atestadoId));
+    const comprovacaoSources: SourceRef[] = comprovacaoMatches
+      .filter((r) => !seenForComprovacao.has(r.atestadoId))
+      .map((r) => ({
+        atestadoId: r.atestadoId,
+        filename: r.filename,
+        pagina: 1,
+        trecho: servicosFiltros.map((s) => s.descricao).join(', '),
+      }));
+
+    const sources: SourceRef[] = [...chunkSources, ...serviceSources, ...qtySources, ...obraSources, ...comprovacaoSources];
     const context = this.truncateContext(contextParts.join('\n\n'));
 
     return { notFound: false, chunks, sources, context, intent };
@@ -353,6 +478,92 @@ export class ReasoningEngineService {
       /\b(terraplenagem|terraplanagem|paviment\w*|drenagem|estrutura|fundação|fundacao|concreto|asfalto|iluminação|iluminacao|saneamento|edificação|edificacao|movimentação|movimentacao)\b/i,
     );
     return m?.[0];
+  }
+
+  /**
+   * Parses a minimum-quantity constraint from a query, e.g.:
+   *   "maior que 1000 de Aperto em alvenaria"  → { minQuantidade: 1000, serviceQuery: "Aperto em alvenaria" }
+   *   "mínimo de 200.292,09 de AAUQ"           → { minQuantidade: 200292.09, serviceQuery: "AAUQ" }
+   * Returns undefined when no quantity constraint is found.
+   */
+  private extractQuantidadeMinima(query: string): { minQuantidade: number; serviceQuery: string } | undefined {
+    const match = query.match(
+      /(?:quantidade\s+)?(?:maior(?:\s+que)?|m[ií]nima?\s*(?:de)?|acima\s+de|no\s+m[ií]nimo|superior\s+a)\s+([\d.,]+)\s+(?:de\s+)?(.+)/i,
+    );
+    if (!match) return undefined;
+    // Parse BR-formatted numbers: "1.000" → 1000; "200.292,09" → 200292.09
+    const raw = match[1].replace(/\.(?=\d{3})/g, '').replace(',', '.');
+    const minQuantidade = parseFloat(raw);
+    if (isNaN(minQuantidade) || minQuantidade <= 0) return undefined;
+    return { minQuantidade, serviceQuery: match[2].trim() };
+  }
+
+  /** Returns all state names/abbreviations mentioned in the query (used for multi-state obra search). */
+  private extractLocalidades(query: string): string[] {
+    const matches = query.match(
+      /\b(piau[íi]|maranha[oõ]|bahia|cear[aá]|par[aá]|amazonas|tocantins|goi[aá]s|minas\s+gerais|s[aã]o\s+paulo|rio\s+de\s+janeiro|paran[aá]|santa\s+catarina|rio\s+grande\s+do\s+sul|mato\s+grosso(?:\s+do\s+sul)?|esp[íi]rito\s+santo|alagoas|sergipe|pernambuco|para[íi]ba|rio\s+grande\s+do\s+norte|rond[oô]nia|acre|roraima|amap[aá]|df|pi|ma|ba|ce|sp|rj|mg|pr|sc|rs|mt|go|pa|am|to|es|al|se|pe|pb|rn|ro|ac|rr|ap|ms)\b/gi,
+    );
+    return matches ? [...new Set(matches.map((m) => m.trim()))] : [];
+  }
+
+  /** Parses "valores superiores a R$ 50.000.000,00" → 50000000. */
+  private extractMinValor(query: string): number | undefined {
+    const match = query.match(
+      /(?:valores?\s+(?:superiores?|acima|maior(?:es)?)\s+a\s+)?R\$\s*([\d.,]+(?:\s+milh[oõ]es?)?)/i,
+    );
+    if (!match) return undefined;
+    let raw = match[1].trim();
+    const milhoes = /milh[oõ]es?/i.test(raw);
+    raw = raw.replace(/milh[oõ]es?/i, '').trim();
+    raw = raw.replace(/\.(?=\d{3})/g, '').replace(',', '.');
+    const val = parseFloat(raw);
+    if (isNaN(val) || val <= 0) return undefined;
+    return milhoes ? val * 1_000_000 : val;
+  }
+
+  /** Parses tipo de obra from the query (e.g. "infraestrutura", "implantação"). */
+  private extractTipoObra(query: string): string | undefined {
+    const m = query.match(
+      /\b(infraestrutura|implanta[çc][aã]o|restaura[çc][aã]o|duplica[çc][aã]o|conserva[çc][aã]o|manuten[çc][aã]o|recupera[çc][aã]o|pavimenta[çc][aã]o|drenagem|saneamento|edifica[çc][aã]o|condom[íi]nio|residencial|rodoviária|rodoviario|ferrovi[áa]ria|ferrovi[áa]rio|hidroviária|hidroviario|portu[áa]ria|portu[áa]rio)\b/i,
+    );
+    return m?.[0];
+  }
+
+  /**
+   * Uses GPT-4o-mini to extract a list of { descricao, minQuantidade, unidade } from a
+   * comprovação query. Returns [] on failure so normal retrieval acts as fallback.
+   */
+  private async extractServicosComQuantidades(query: string): Promise<ServicoFilter[]> {
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        stream: false,
+        temperature: 0,
+        max_tokens: 400,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Você é um assistente que extrai informações estruturadas de requisitos de habilitação de obras públicas. ' +
+              'Dado o texto do usuário, retorne um array JSON com os serviços/materiais mencionados e suas quantidades mínimas. ' +
+              'Formato: [{"descricao":"<nome do serviço>","minQuantidade":<número ou null>,"unidade":"<unidade ou null>"}]. ' +
+              'Use null quando a quantidade não for especificada. Responda SOMENTE com o JSON array, sem markdown.',
+          },
+          { role: 'user', content: query },
+        ],
+      });
+      const raw = completion.choices[0]?.message?.content?.trim() ?? '';
+      const parsed = JSON.parse(raw) as { descricao: string; minQuantidade: number | null; unidade?: string | null }[];
+      return parsed
+        .filter((r) => r.descricao && r.descricao.trim().length > 0)
+        .map((r) => ({
+          descricao: r.descricao.trim(),
+          minQuantidade: r.minQuantidade != null && r.minQuantidade > 0 ? r.minQuantidade : undefined,
+        }));
+    } catch (err) {
+      this.logger.warn(`extractServicosComQuantidades failed, skipping: ${err}`);
+      return [];
+    }
   }
 
   private isContextLengthError(err: unknown): boolean {
@@ -405,6 +616,7 @@ export class ReasoningEngineService {
   }
 
   private detectIntent(query: string): QueryIntent {
+    if (COMPROVACAO_KEYWORDS.test(query)) return 'COMPROVACAO';
     if (QUANTITATIVO_KEYWORDS.test(query)) return 'QUANTITATIVO';
     if (LISTAGEM_KEYWORDS.test(query)) return 'LISTAGEM';
     return 'NARRATIVO';

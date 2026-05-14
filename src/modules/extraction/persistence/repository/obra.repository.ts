@@ -28,6 +28,24 @@ export interface LocalidadeAggRow {
   atestados: number;
 }
 
+export interface ObraContextFilter {
+  /** OR match against o.local using ILIKE for each string */
+  localidades?: string[];
+  /** ILIKE match against o.tipo */
+  tipo?: string;
+  /** o.valor >= minValor */
+  minValor?: number;
+}
+
+export interface ObraContextRow {
+  atestadoId: string;
+  filename: string;
+  nome: string;
+  local: string | null;
+  tipo: string | null;
+  valor: number | null;
+}
+
 @Injectable()
 export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
   constructor(@InjectDataSource() dataSource: DataSource) {
@@ -82,6 +100,52 @@ export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
        ${whereClause}
        GROUP BY o.local
        ORDER BY "atestados" DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+  }
+
+  /**
+   * Returns individual obra rows (one per atestado) matching localidade, tipo and/or minValor filters.
+   * Used to inject structured obra context into the LLM prompt.
+   */
+  async findObrasForContext(filter: ObraContextFilter): Promise<ObraContextRow[]> {
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    if (filter.localidades && filter.localidades.length > 0) {
+      const localConds = filter.localidades.map((l) => {
+        params.push(`%${l}%`);
+        return `UPPER(o.local) LIKE UPPER($${params.length})`;
+      });
+      conditions.push(`(${localConds.join(' OR ')})`);
+    }
+
+    if (filter.tipo) {
+      params.push(`%${filter.tipo}%`);
+      conditions.push(`UPPER(o.tipo) LIKE UPPER($${params.length})`);
+    }
+
+    if (filter.minValor !== undefined) {
+      params.push(filter.minValor);
+      conditions.push(`o.valor >= $${params.length}`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(50); // limit
+
+    return this.query<ObraContextRow>(
+      `SELECT
+         o.atestado_id                                          AS "atestadoId",
+         COALESCE(a.original_filename, o.atestado_id::text)    AS filename,
+         o.nome,
+         o.local,
+         o.tipo,
+         o.valor::float                                         AS valor
+       FROM obras o
+       LEFT JOIN atestados a ON a.id = o.atestado_id
+       ${whereClause}
+       ORDER BY o.valor DESC NULLS LAST
        LIMIT $${params.length}`,
       params,
     );

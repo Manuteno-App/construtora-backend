@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import type { Obra } from '../../persistence/entity/obra.entity';
 import type { ServicoExecutado } from '../../persistence/entity/servico-executado.entity';
-import { ObraRepository } from '../../persistence/repository/obra.repository';
+import { ObraContextFilter, ObraContextRow, ObraRepository } from '../../persistence/repository/obra.repository';
 import type {
   QuantitativoFilters,
   QuantitativoRow,
   ServiceContextResult,
 } from '../../persistence/repository/servico-executado.repository';
 import { ServicoExecutadoRepository } from '../../persistence/repository/servico-executado.repository';
-import { AnalyticsHints, IExtractionApi } from '../interface/extraction-api.interface';
+import { AnalyticsHints, IExtractionApi, ServicoFilter } from '../interface/extraction-api.interface';
 
 @Injectable()
 export class ExtractionFacade implements IExtractionApi {
@@ -87,10 +87,20 @@ export class ExtractionFacade implements IExtractionApi {
     return this.servicoRepo.searchForContext(query);
   }
 
+  findObrasForContext(filter: ObraContextFilter): Promise<ObraContextRow[]> {
+    return this.obraRepo.findObrasForContext(filter);
+  }
+
   findAtestadosComTodosServicos(
     servicos: string[],
     minQuantidade?: number,
   ): Promise<{ atestadoId: string; filename: string }[]> {
     return this.servicoRepo.findAtestadosComTodosServicos(servicos, minQuantidade);
+  }
+
+  findAtestadosComServicosFilter(
+    servicos: ServicoFilter[],
+  ): Promise<{ atestadoId: string; filename: string }[]> {
+    return this.servicoRepo.findAtestadosComServicosFilter(servicos);
   }
 }

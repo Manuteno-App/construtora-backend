@@ -20,8 +20,8 @@ export class HybridRetrieverService {
     this.topK = config.get<number>('rag.topK') ?? 10;
   }
 
-  async retrieve(query: string, filters?: RetrievalFilters, intent?: 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO'): Promise<RetrievedChunk[]> {
-    const effectiveTopK = intent === 'LISTAGEM' ? Math.max(this.topK, 30) : this.topK;
+  async retrieve(query: string, filters?: RetrievalFilters, intent?: 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO' | 'COMPROVACAO'): Promise<RetrievedChunk[]> {
+    const effectiveTopK = intent === 'LISTAGEM' || intent === 'COMPROVACAO' ? Math.max(this.topK, 30) : this.topK;
 
     const keywords = this.extractKeywords(query);
     const specificKeywords = this.extractSpecificKeywords(query);

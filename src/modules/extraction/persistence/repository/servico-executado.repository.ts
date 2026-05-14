@@ -246,6 +246,52 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     );
   }
 
+  /**
+   * Finds atestados where ALL services pass their individual minQuantidade constraint.
+   * Accepts per-service filters — unlike findAtestadosComTodosServicos which uses a single minQty.
+   */
+  async findAtestadosComServicosFilter(
+    servicos: { descricao: string; minQuantidade?: number }[],
+  ): Promise<{ atestadoId: string; filename: string }[]> {
+    if (servicos.length === 0) return [];
+
+    const params: unknown[] = [];
+    const havingParts: string[] = [];
+
+    for (const s of servicos) {
+      params.push(`%${s.descricao}%`);
+      const descIdx = params.length;
+      if (s.minQuantidade !== undefined) {
+        params.push(s.minQuantidade);
+        const minIdx = params.length;
+        havingParts.push(
+          `SUM(CASE WHEN UPPER(s.descricao) LIKE UPPER($${descIdx}) AND COALESCE(s.quantidade, 0) >= $${minIdx} THEN 1 ELSE 0 END) > 0`,
+        );
+      } else {
+        havingParts.push(
+          `SUM(CASE WHEN UPPER(s.descricao) LIKE UPPER($${descIdx}) THEN 1 ELSE 0 END) > 0`,
+        );
+      }
+    }
+
+    // WHERE: at least one of the services must match (for index selectivity)
+    const allConditions = servicos
+      .map((_, i) => `UPPER(s.descricao) LIKE UPPER($${i + 1})`)
+      .join(' OR ');
+
+    return this.query<{ atestadoId: string; filename: string }>(
+      `SELECT
+         s.atestado_id                                        AS "atestadoId",
+         MAX(COALESCE(a.original_filename, s.atestado_id::text)) AS filename
+       FROM servicos_executados s
+       LEFT JOIN atestados a ON a.id = s.atestado_id
+       WHERE ${allConditions}
+       GROUP BY s.atestado_id
+       HAVING ${havingParts.join(' AND ')}`,
+      params,
+    );
+  }
+
   private extractSearchTerms(query: string): string[] {
     // Quoted phrase takes priority
     const quotedMatch = query.match(/"([^"]+)"/);
