@@ -183,7 +183,8 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
    * "TIGRE", etc.) and without being limited by the LIMIT 100 of the fallback path.
    */
   async searchForContext(query: string): Promise<ServiceContextResult[]> {
-    const SQL = `SELECT
+    const buildSql = (conditions: string, limitParamIdx: number) => `
+      SELECT
          s.atestado_id                                        AS "atestadoId",
          COALESCE(a.original_filename, s.atestado_id::text)  AS filename,
          s.descricao,
@@ -193,9 +194,9 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
          s.trecho
        FROM servicos_executados s
        LEFT JOIN atestados a ON a.id = s.atestado_id
-       WHERE {CONDITIONS}
+       WHERE ${conditions}
        ORDER BY s.descricao, filename
-       LIMIT ${'{LIMIT}'}`;
+       LIMIT $${limitParamIdx}`;
 
     const itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
     if (itemPhraseMatch) {
@@ -209,7 +210,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
         fastParams.push(500); // generous limit — we want ALL matching atestados
 
         const fastResults = await this.query<ServiceContextResult>(
-          SQL.replace('{CONDITIONS}', fastConditions).replace("'{LIMIT}'", `$${fastParams.length}`),
+          buildSql(fastConditions, fastParams.length),
           fastParams,
         );
         if (fastResults.length > 0) return fastResults;
@@ -226,7 +227,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     params.push(100); // limit
 
     return this.query<ServiceContextResult>(
-      SQL.replace('{CONDITIONS}', conditions).replace("'{LIMIT}'", `$${params.length}`),
+      buildSql(conditions, params.length),
       params,
     );
   }
