@@ -148,9 +148,10 @@ export class ReasoningEngineService {
 
       const isNotFound = fullResponse.includes(NOT_FOUND_MESSAGE);
       const dedupedSources = this.deduplicateSources(sources);
-      // LISTAGEM, QUANTITATIVO and COMPROVACAO: always expose all retrieved sources — the LLM narrates/sums
-      // without citing every individual [Fonte:] bracket, so response-filtering would drop valid sources.
-      const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' || intent === 'QUANTITATIVO' || intent === 'COMPROVACAO') ? dedupedSources : this.filterSourcesByResponse(dedupedSources, fullResponse);
+      // COMPROVACAO: always expose all retrieved sources — the LLM summarises requirements without
+      // citing every [Fonte:] bracket, so response-filtering would drop valid sources.
+      // All other intents: filter by citations so the sources panel matches what the LLM cited.
+      const filteredSources = isNotFound ? [] : intent === 'COMPROVACAO' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, fullResponse);
       emit({ type: 'sources', sources: filteredSources });
       emit({ type: 'done' });
 
@@ -200,8 +201,9 @@ export class ReasoningEngineService {
     const text = completion.choices[0]?.message?.content ?? NOT_FOUND_MESSAGE;
     const isNotFound = text.includes(NOT_FOUND_MESSAGE);
     const dedupedSources = this.deduplicateSources(sources);
-    // LISTAGEM, QUANTITATIVO and COMPROVACAO: always expose all retrieved sources.
-    const filteredSources = isNotFound ? [] : (intent === 'LISTAGEM' || intent === 'QUANTITATIVO' || intent === 'COMPROVACAO') ? dedupedSources : this.filterSourcesByResponse(dedupedSources, text);
+    // COMPROVACAO: always expose all retrieved sources.
+    // All other intents: filter by citations so the sources panel matches what the LLM cited.
+    const filteredSources = isNotFound ? [] : intent === 'COMPROVACAO' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, text);
     await this.persistTurns(dto.query, text, dto.sessionId, filteredSources);
 
     return { answer: text, sources: filteredSources, notFound: isNotFound };
