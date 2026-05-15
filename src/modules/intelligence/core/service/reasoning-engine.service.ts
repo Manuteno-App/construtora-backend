@@ -258,6 +258,11 @@ export class ReasoningEngineService {
     const maxSimilarity = chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
     const hasServiceResults = serviceResults.length > 0;
     const hasQtyResults = qtyMatches.length > 0;
+    // When the query names a specific item/service (e.g. "serviço Grelha e Porta-Grelha fab. TIGRE 100mm")
+    // and SQL found exact matches, vector chunks are unrelated noise — suppress them from both
+    // the LLM context and the sources panel so only the precise SQL results are shown.
+    const hasExactItemPhrase = /\b(?:item|servi[çc]os?|material|insumo|produto)\s+.{4,}/i.test(dto.query);
+    const exactItemMatch = hasExactItemPhrase && hasServiceResults;
     const hasObrasResults = obrasResults.length > 0;
     const hasComprovacaoResults = comprovacaoMatches.length > 0;
 
@@ -279,7 +284,7 @@ export class ReasoningEngineService {
     // For listing queries, prepend an enumeration of all matching documents as a checklist
     // so the LLM knows about every document before reading the chunks
     if (intent === 'LISTAGEM') {
-      const chunkFilenames = maxSimilarity >= this.similarityThreshold
+      const chunkFilenames = (maxSimilarity >= this.similarityThreshold && !exactItemMatch)
         ? chunks.map((c) => `- ${c.originalFilename} (p.${c.pageNumber})`)
         : [];
       const serviceFilenames = serviceResults
@@ -314,8 +319,10 @@ export class ReasoningEngineService {
       );
     }
 
-    // Add vector/keyword chunks that pass the threshold
-    if (maxSimilarity >= this.similarityThreshold && chunks.length > 0) {
+    // Add vector/keyword chunks that pass the threshold.
+    // Suppressed when the query names an explicit item and SQL already found exact matches —
+    // in that case chunks are unrelated noise that confuses the LLM and pollutes the sources panel.
+    if (maxSimilarity >= this.similarityThreshold && chunks.length > 0 && !exactItemMatch) {
       contextParts.push(
         chunks
           .map((c) => `[Fonte: ${c.originalFilename}, p.${c.pageNumber}]\n${c.content}`)
@@ -377,8 +384,10 @@ export class ReasoningEngineService {
       }
     }
 
-    // Sources: combine chunk sources + service-result sources + quantity-filter sources
-    const chunkSources: SourceRef[] = maxSimilarity >= this.similarityThreshold
+    // Sources: combine chunk sources + service-result sources + quantity-filter sources.
+    // Chunk sources are suppressed when the query names an explicit item and SQL found exact
+    // matches — keeps the sources panel clean and prevents unrelated documents from appearing.
+    const chunkSources: SourceRef[] = (maxSimilarity >= this.similarityThreshold && !exactItemMatch)
       ? chunks.map((c) => ({
           atestadoId: c.atestadoId,
           filename: c.originalFilename,
