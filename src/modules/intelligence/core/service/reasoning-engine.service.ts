@@ -622,13 +622,22 @@ export class ReasoningEngineService {
     }
     // No parseable citations — return all sources
     if (cited.size === 0) return sources;
+
+    // Pre-compute lowercase response for literal filename scanning
+    const responseTextLower = response.toLowerCase();
+
     // Match sources against cited filenames using substring matching:
     // the LLM may write a shortened or slightly different version of the filename.
+    // Also match filenames that appear literally in the response text — the LLM sometimes
+    // lists document names in a numbered list without [Fonte:] format, e.g.:
+    //   "1. Atestado CIV Bom Preço São Luis Shopping.pdf"
+    // Guard with length >= 15 to avoid false positives from very short filenames.
     const matched = sources.filter((s) => {
       const fn = s.filename.toLowerCase();
       for (const c of cited) {
         if (fn === c || fn.includes(c) || c.includes(fn)) return true;
       }
+      if (fn.length >= 15 && responseTextLower.includes(fn)) return true;
       return false;
     });
     // If citations were parsed but none matched, fall back to all sources.
