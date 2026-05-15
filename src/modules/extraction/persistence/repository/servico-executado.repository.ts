@@ -311,17 +311,28 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     // after the trigger keyword and use it as a direct LIKE condition. This guarantees
     // a match even when the item name is short, contains symbols, or individual tokens
     // are filtered out (e.g. "Te" has ≤ 2 chars, "Ø" has 1 char).
-    const phrases: string[] = [];
+    // IMPORTANT: return early here — do NOT fall through to full-query word decomposition.
+    // Mixing conversational words like "foi", "realizado", "fab" into the OR conditions
+    // pollutes the result set and causes the LIMIT 100 to be consumed by irrelevant rows
+    // before the target item (e.g. starting with "G") is reached alphabetically.
     const itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
     if (itemPhraseMatch) {
       const raw = itemPhraseMatch[1].replace(/[?!.]+$/, '').trim();
       if (raw.length >= 4) {
-        phrases.push(raw);
+        const phrases: string[] = [raw];
         // Also add a normalized variant: replace technical symbols that may differ between
         // DB encoding and user input (degree sign °/º, diameter Ø/ø, etc.) with the SQL
         // wildcard %, so the LIKE pattern tolerates encoding mismatches.
         const normalized = raw.replace(/[°ºØøΦφ]/g, '%');
         if (normalized !== raw) phrases.push(normalized);
+
+        // Extract fallback words from THE PHRASE ONLY — not the full conversational query.
+        const phraseWords = raw
+          .split(/\s+/)
+          .map((w) => w.replace(/["'.,;:?!()\[\]]/g, '').trim())
+          .filter((w) => w.length > 2 && !STOP_WORDS.has(w.toLowerCase()));
+
+        return [...new Set([...phrases, ...phraseWords])];
       }
     }
 
@@ -330,6 +341,6 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
       .map((w) => w.replace(/["'.,;:?!()\[\]]/g, '').trim())
       .filter((w) => w.length > 2 && !STOP_WORDS.has(w.toLowerCase()));
 
-    return [...new Set([...phrases, ...words])];
+    return [...new Set(words)];
   }
 }
