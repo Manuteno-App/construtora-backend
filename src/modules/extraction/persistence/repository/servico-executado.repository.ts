@@ -175,17 +175,15 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
    * Direct ILIKE search on descricao — used to populate LLM context when
    * vector similarity is insufficient. Accepts the raw query string and
    * extracts search terms internally.
+   *
+   * Fast path: when the query explicitly names a service/item (e.g. "serviço Grelha e
+   * Porta-Grelha fab. TIGRE 100mm"), run a targeted ILIKE with the full phrase first —
+   * before any word decomposition. This guarantees a hit when the user copies a service
+   * name verbatim from the UI, regardless of how generic individual tokens are ("fab",
+   * "TIGRE", etc.) and without being limited by the LIMIT 100 of the fallback path.
    */
   async searchForContext(query: string): Promise<ServiceContextResult[]> {
-    const terms = this.extractSearchTerms(query);
-    if (terms.length === 0) return [];
-
-    const params: unknown[] = terms.map((t) => `%${t}%`);
-    const conditions = terms.map((_, i) => `UPPER(s.descricao) LIKE UPPER($${i + 1})`).join(' OR ');
-    params.push(100); // limit
-
-    return this.query<ServiceContextResult>(
-      `SELECT
+    const SQL = `SELECT
          s.atestado_id                                        AS "atestadoId",
          COALESCE(a.original_filename, s.atestado_id::text)  AS filename,
          s.descricao,
@@ -195,9 +193,40 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
          s.trecho
        FROM servicos_executados s
        LEFT JOIN atestados a ON a.id = s.atestado_id
-       WHERE ${conditions}
+       WHERE {CONDITIONS}
        ORDER BY s.descricao, filename
-       LIMIT $${params.length}`,
+       LIMIT ${'{LIMIT}'}`;
+
+    const itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
+    if (itemPhraseMatch) {
+      const raw = itemPhraseMatch[1].replace(/[?!.]+$/, '').trim();
+      if (raw.length >= 4) {
+        // Normalized variant uses the SQL _ wildcard for technical symbols that may differ
+        // between PDF encoding and user input (degree sign °/º, diameter Ø/ø, etc.)
+        const normalized = raw.replace(/[°ºØøΦφ]/g, '_');
+        const fastParams: unknown[] = normalized !== raw ? [`%${raw}%`, `%${normalized}%`] : [`%${raw}%`];
+        const fastConditions = fastParams.map((_, i) => `UPPER(s.descricao) LIKE UPPER($${i + 1})`).join(' OR ');
+        fastParams.push(500); // generous limit — we want ALL matching atestados
+
+        const fastResults = await this.query<ServiceContextResult>(
+          SQL.replace('{CONDITIONS}', fastConditions).replace("'{LIMIT}'", `$${fastParams.length}`),
+          fastParams,
+        );
+        if (fastResults.length > 0) return fastResults;
+        // Zero results — fall through to word-decomposition path below
+      }
+    }
+
+    // Fallback: word-decomposition path for generic queries without an explicit item name
+    const terms = this.extractSearchTerms(query);
+    if (terms.length === 0) return [];
+
+    const params: unknown[] = terms.map((t) => `%${t}%`);
+    const conditions = terms.map((_, i) => `UPPER(s.descricao) LIKE UPPER($${i + 1})`).join(' OR ');
+    params.push(100); // limit
+
+    return this.query<ServiceContextResult>(
+      SQL.replace('{CONDITIONS}', conditions).replace("'{LIMIT}'", `$${params.length}`),
       params,
     );
   }
