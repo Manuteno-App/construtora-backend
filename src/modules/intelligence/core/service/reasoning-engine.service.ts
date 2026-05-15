@@ -258,10 +258,15 @@ export class ReasoningEngineService {
     const maxSimilarity = chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
     const hasServiceResults = serviceResults.length > 0;
     const hasQtyResults = qtyMatches.length > 0;
-    // When the query names a specific item/service (e.g. "serviço Grelha e Porta-Grelha fab. TIGRE 100mm")
-    // and SQL found exact matches, vector chunks are unrelated noise — suppress them from both
+    // When the query names a specific item/service and SQL found exact matches,
+    // vector chunk sources are noise — suppress them from both
     // the LLM context and the sources panel so only the precise SQL results are shown.
-    const hasExactItemPhrase = /\b(?:item|servi[çc]os?|material|insumo|produto)\s+.{4,}/i.test(dto.query);
+    // High-confidence triggers: serviço/item/material/insumo/produto
+    // Action-word triggers: realizado/executado/instalado/fornecido followed by an
+    // uppercase-first item name (guards against "realizado o serviço X" false positives).
+    const hasExactItemPhrase =
+      /\b(?:item|servi[çc]os?|material|insumo|produto)\s+.{4,}/i.test(dto.query) ||
+      /\b(?:realizado|executado|instalado|fornecido)\s+[A-ZÁÉÍÓÚÀÂÊÔÃÕÜÇ][^\n?!]{3,}/i.test(dto.query);
     const exactItemMatch = hasExactItemPhrase && hasServiceResults;
     const hasObrasResults = obrasResults.length > 0;
     const hasComprovacaoResults = comprovacaoMatches.length > 0;

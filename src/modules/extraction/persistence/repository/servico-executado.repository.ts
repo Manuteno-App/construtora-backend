@@ -198,7 +198,15 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
        ORDER BY s.descricao, filename
        LIMIT $${limitParamIdx}`;
 
-    const itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
+    // Try high-confidence trigger words first (serviço, item, material, etc.).
+    // If no match, try action-word triggers (realizado, executado, instalado, fornecido)
+    // but only when the captured text starts with an uppercase letter — this filters out
+    // patterns like "realizado o serviço X" (lowercase "o") while correctly capturing
+    // "realizado Tubo pvc rígido..." (uppercase "T").
+    let itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
+    if (!itemPhraseMatch) {
+      itemPhraseMatch = query.match(/\b(?:realizado|executado|instalado|fornecido)\s+([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÇ][^\n?!]{3,})/i);
+    }
     if (itemPhraseMatch) {
       const raw = itemPhraseMatch[1].replace(/[?!.]+$/, '').trim();
       if (raw.length >= 4) {
@@ -345,7 +353,10 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     // Mixing conversational words like "foi", "realizado", "fab" into the OR conditions
     // pollutes the result set and causes the LIMIT 100 to be consumed by irrelevant rows
     // before the target item (e.g. starting with "G") is reached alphabetically.
-    const itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
+    let itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
+    if (!itemPhraseMatch) {
+      itemPhraseMatch = query.match(/\b(?:realizado|executado|instalado|fornecido)\s+([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÇ][^\n?!]{3,})/i);
+    }
     if (itemPhraseMatch) {
       const raw = itemPhraseMatch[1].replace(/[?!.]+$/, '').trim();
       if (raw.length >= 4) {
