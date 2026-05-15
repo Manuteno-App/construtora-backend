@@ -307,11 +307,29 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
       'serviço', 'servico', 'serviços', 'servicos', 'quais', 'qual', 'sobre',
     ]);
 
+    // When the query mentions a specific item/service by name, extract the full phrase
+    // after the trigger keyword and use it as a direct LIKE condition. This guarantees
+    // a match even when the item name is short, contains symbols, or individual tokens
+    // are filtered out (e.g. "Te" has ≤ 2 chars, "Ø" has 1 char).
+    const phrases: string[] = [];
+    const itemPhraseMatch = query.match(/\b(?:item|servi[çc]os?|material|insumo|produto)\s+(.{4,})/i);
+    if (itemPhraseMatch) {
+      const raw = itemPhraseMatch[1].replace(/[?!.]+$/, '').trim();
+      if (raw.length >= 4) {
+        phrases.push(raw);
+        // Also add a normalized variant: replace technical symbols that may differ between
+        // DB encoding and user input (degree sign °/º, diameter Ø/ø, etc.) with the SQL
+        // wildcard %, so the LIKE pattern tolerates encoding mismatches.
+        const normalized = raw.replace(/[°ºØøΦφ]/g, '%');
+        if (normalized !== raw) phrases.push(normalized);
+      }
+    }
+
     const words = query
       .split(/\s+/)
       .map((w) => w.replace(/["'.,;:?!()\[\]]/g, '').trim())
       .filter((w) => w.length > 2 && !STOP_WORDS.has(w.toLowerCase()));
 
-    return [...new Set(words)];
+    return [...new Set([...phrases, ...words])];
   }
 }
