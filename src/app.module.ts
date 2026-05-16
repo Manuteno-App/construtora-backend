@@ -12,6 +12,8 @@ import { ExtractionModule } from './modules/extraction/extraction.module';
 import { IndexingModule } from './modules/indexing/indexing.module';
 import { IntelligenceModule } from './modules/intelligence/intelligence.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { QualificationModule } from './modules/qualification/qualification.module';
+import { McpModule } from './modules/mcp/mcp.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { HealthController } from './health.controller';
 
@@ -33,6 +35,8 @@ import { HealthController } from './health.controller';
     IndexingModule,
     IntelligenceModule,
     AuthModule,
+    QualificationModule,
+    McpModule,
   ],
   controllers: [HealthController],
   providers: [

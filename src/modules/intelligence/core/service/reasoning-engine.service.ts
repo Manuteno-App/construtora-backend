@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import OpenAI from 'openai';
 import { ServiceContextResult } from '../../../extraction/persistence/repository/servico-executado.repository';
+import { QualificationService } from '../../../qualification/core/service/qualification.service';
 import { EXTRACTION_API, IExtractionApi, ServicoFilter } from '../../../extraction/public-api/interface/extraction-api.interface';
 import { ConversationRole } from '../../persistence/entity/conversation-turn.entity';
 import { ConversationTurnRepository } from '../../persistence/repository/conversation-turn.repository';
@@ -52,8 +53,10 @@ Quando a pergunta solicitar QUAIS documentos ou acervos contêm um determinado i
 - Para cada documento, insira apenas a citação inline no formato [Fonte: <filename>, p.<pagina>] — uma por documento, sem agrupar.
 - Não repita o nome do documento fora do colchete [Fonte:].`;
 
-type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO' | 'COMPROVACAO';
+type QueryIntent = 'QUANTITATIVO' | 'LISTAGEM' | 'NARRATIVO' | 'COMPROVACAO' | 'BUNDLE_SINGLE' | 'BUNDLE_CUMULATIVE';
 
+const BUNDLE_SINGLE_KEYWORDS = /um\s+único\s+atestado|atestado\s+único|único\s+atestado\s+que|atestado\s+individual\s+por/i;
+const BUNDLE_CUMULATIVE_KEYWORDS = /somatório\s+de\s+atestados|soma\s+de\s+atestados|conjunto\s+de\s+atestados|atestados\s+acumulados|acervo\s+cumulativo/i;
 const COMPROVACAO_KEYWORDS = /comprov[ae]|comprovação|comprovacao|demonstr[ae]|qualificação|qualificacao|habilit[ae]|habilitação|habilitacao|atesta que|acervo técnico|acervo tecnico/i;
 const QUANTITATIVO_KEYWORDS = /total|volume|quantidade|soma|quanto|somar|somatório|somatorio|medição|medicao|metragem|metros|ranking|frequente|maior|recorrente|demandado|acumulado|executado|some|custo|valor|valores|estado|cidade|localidade|piauí|piaui|bahia|ceará|ceara|maranhão|maranhao/i;
 const LISTAGEM_KEYWORDS = /quais|liste|listar|enumere|relação de|relação das/i;
@@ -89,6 +92,7 @@ export class ReasoningEngineService {
     @Inject(EXTRACTION_API) private readonly extractionApi: IExtractionApi,
     private readonly config: ConfigService,
     private readonly turnRepo: ConversationTurnRepository,
+    private readonly qualificationService: QualificationService,
   ) {
     this.openai = new OpenAI({ apiKey: config.get<string>('openaiApiKey') });
     this.similarityThreshold = config.get<number>('rag.similarityThreshold') ?? 0.35;
@@ -231,18 +235,21 @@ export class ReasoningEngineService {
     const tipoObra = this.extractTipoObra(dto.query);
     const hasObraFilter = localidades.length > 0 || minValor !== undefined || tipoObra !== undefined;
 
-    // For COMPROVACAO queries, extract services via LLM before running SQL (can't parallelize)
+    // For COMPROVACAO/BUNDLE queries, extract services via LLM before running SQL (can't parallelize)
     let servicosFiltros: ServicoFilter[] = [];
-    if (intent === 'COMPROVACAO') {
+    if (intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE') {
       servicosFiltros = await this.extractServicosComQuantidades(dto.query);
-      this.logger.log(`COMPROVACAO: extracted ${servicosFiltros.length} service filters`);
+      this.logger.log(`${intent}: extracted ${servicosFiltros.length} service filters`);
     }
 
     // Run all retrieval paths in parallel
     // NOTE: searchServicosForContext uses the ORIGINAL query (not rewritten) because SQL ILIKE
     // matching works best with the user's exact terms. The rewrite is only useful for vector search.
+    const retrieverIntent =
+      intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE' ? 'COMPROVACAO' : intent;
+
     const [chunks, serviceResults, qtyMatches, obrasResults, comprovacaoMatches] = await Promise.all([
-      this.retriever.retrieve(retrievalQuery, dto.filters, intent),
+      this.retriever.retrieve(retrievalQuery, dto.filters, retrieverIntent),
       this.extractionApi.searchServicosForContext(dto.query),
       qtyHint
         ? this.extractionApi.findAtestadosComTodosServicos([qtyHint.serviceQuery], qtyHint.minQuantidade)
@@ -251,7 +258,7 @@ export class ReasoningEngineService {
         ? this.extractionApi.findObrasForContext({ localidades, tipo: tipoObra, minValor })
         : Promise.resolve<import('../../../extraction/persistence/repository/obra.repository').ObraContextRow[]>([]),
       servicosFiltros.length > 0
-        ? this.extractionApi.findAtestadosComServicosFilter(servicosFiltros)
+        ? this.resolveComprovacaoWithQualification(servicosFiltros, intent)
         : Promise.resolve<{ atestadoId: string; filename: string }[]>([]),
     ]);
 
@@ -650,10 +657,54 @@ export class ReasoningEngineService {
   }
 
   private detectIntent(query: string): QueryIntent {
+    if (BUNDLE_CUMULATIVE_KEYWORDS.test(query)) return 'BUNDLE_CUMULATIVE';
+    if (BUNDLE_SINGLE_KEYWORDS.test(query)) return 'BUNDLE_SINGLE';
     if (COMPROVACAO_KEYWORDS.test(query)) return 'COMPROVACAO';
     if (QUANTITATIVO_KEYWORDS.test(query)) return 'QUANTITATIVO';
     if (LISTAGEM_KEYWORDS.test(query)) return 'LISTAGEM';
     return 'NARRATIVO';
+  }
+
+  /**
+   * Attempts qualification service for COMPROVACAO/BUNDLE_SINGLE/BUNDLE_CUMULATIVE intents.
+   * Falls back to extractionApi.findAtestadosComServicosFilter on error or empty results.
+   */
+  private async resolveComprovacaoWithQualification(
+    servicosFiltros: ServicoFilter[],
+    intent: QueryIntent,
+  ): Promise<{ atestadoId: string; filename: string }[]> {
+    const serviceReqs = servicosFiltros.map((sf) => ({
+      query: sf.descricao,
+      minQuantidade: sf.minQuantidade,
+    }));
+
+    try {
+      if (intent === 'BUNDLE_CUMULATIVE') {
+        const cumulativoResults = await this.qualificationService.findBundleCumulativeCoverage(serviceReqs);
+        const seen = new Set<string>();
+        const result: { atestadoId: string; filename: string }[] = [];
+        for (const svc of cumulativoResults) {
+          for (const a of svc.qualifyingAtestados) {
+            if (!seen.has(a.atestadoId)) {
+              seen.add(a.atestadoId);
+              result.push({ atestadoId: a.atestadoId, filename: a.filename });
+            }
+          }
+        }
+        if (result.length > 0) return result;
+      } else {
+        // COMPROVACAO or BUNDLE_SINGLE: greedy set cover
+        const bundleResult = await this.qualificationService.findBundleSingleCoverage(serviceReqs);
+        if (bundleResult.minimumSet.length > 0) {
+          return bundleResult.minimumSet.map((s) => ({ atestadoId: s.atestadoId, filename: s.filename }));
+        }
+      }
+    } catch (err) {
+      this.logger.error('Qualification service error, falling back to extractionApi:', err);
+    }
+
+    this.logger.warn(`${intent}: qualification returned no results, falling back to extractionApi`);
+    return this.extractionApi.findAtestadosComServicosFilter(servicosFiltros);
   }
 
   /**

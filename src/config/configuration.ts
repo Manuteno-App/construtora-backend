@@ -22,6 +22,7 @@ export const configurationSchema = Joi.object({
 
   RAG_TOP_K: Joi.number().default(20),
   RAG_SIMILARITY_THRESHOLD: Joi.number().default(0.35),
+  QUALIFICATION_CONFIDENCE_THRESHOLD: Joi.number().default(0.05),
 
   JWT_ACCESS_SECRET: Joi.string().required(),
   JWT_REFRESH_SECRET: Joi.string().required(),
@@ -59,6 +60,10 @@ export const configuration = () => ({
   rag: {
     topK: parseInt(process.env.RAG_TOP_K ?? '50', 10),
     similarityThreshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD ?? '0.35'),
+  },
+
+  qualification: {
+    confidenceThreshold: parseFloat(process.env.QUALIFICATION_CONFIDENCE_THRESHOLD ?? '0.05'),
   },
 
   jwt: {

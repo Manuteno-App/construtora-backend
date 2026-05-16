@@ -7,12 +7,14 @@ import { ReasoningEngineService } from './core/service/reasoning-engine.service'
 import { IntelligenceController } from './http/rest/controller/intelligence.controller';
 import { ExtractionModule } from '../extraction/extraction.module';
 import { IndexingModule } from '../indexing/indexing.module';
+import { QualificationModule } from '../qualification/qualification.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ConversationTurn]),
     ExtractionModule,
     IndexingModule,
+    QualificationModule,
   ],
   providers: [
     ConversationTurnRepository,
