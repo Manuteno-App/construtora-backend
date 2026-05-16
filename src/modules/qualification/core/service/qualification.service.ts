@@ -9,6 +9,7 @@ import {
   ResolvedDescricao,
   ServiceCoverage,
   ServiceRequirement,
+  ServicoBuscado,
 } from '../../public-api/interface/qualification-api.interface';
 
 interface QualificationSourceRow {
@@ -101,7 +102,9 @@ export class QualificationService {
        ORDER BY a.original_filename`,
       params,
     );
-    return this.mapRows(rows);
+    const sources = this.mapRows(rows);
+    const servicosMap = await this.fetchServicosParaAtestados(sources.map((s) => s.atestadoId), descricoes);
+    return sources.map((s) => ({ ...s, servicos: servicosMap.get(s.atestadoId) ?? [] }));
   }
 
   async findAtestadosComQuantidadeMinima(
@@ -143,7 +146,9 @@ export class QualificationService {
        ORDER BY "totalQuantidade" DESC`,
       params,
     );
-    return this.mapRows(rows);
+    const sources = this.mapRows(rows);
+    const servicosMap = await this.fetchServicosParaAtestados(sources.map((s) => s.atestadoId), descricoes);
+    return sources.map((s) => ({ ...s, servicos: servicosMap.get(s.atestadoId) ?? [] }));
   }
 
   async findCumulativoAtestados(
@@ -186,8 +191,11 @@ export class QualificationService {
     );
 
     const totalQuantidade = rows.reduce((sum, r) => sum + (parseFloat(r.totalQuantidade) || 0), 0);
+    const sources = this.mapRows(rows);
+    const servicosMap = await this.fetchServicosParaAtestados(sources.map((s) => s.atestadoId), descricoes);
+    const enrichedSources = sources.map((s) => ({ ...s, servicos: servicosMap.get(s.atestadoId) ?? [] }));
     return {
-      atestados: this.mapRows(rows),
+      atestados: enrichedSources,
       totalQuantidade,
       meetsMinimum: totalQuantidade >= minQty,
       minQuantidade: minQty,
@@ -378,5 +386,40 @@ export class QualificationService {
       valor: r.valor != null ? parseFloat(String(r.valor)) : undefined,
       contratoNumero: r.contratoNumero ?? undefined,
     }));
+  }
+
+  private async fetchServicosParaAtestados(
+    atestadoIds: string[],
+    descricoes: string[],
+  ): Promise<Map<string, ServicoBuscado[]>> {
+    if (atestadoIds.length === 0 || descricoes.length === 0) return new Map();
+    const params: unknown[] = [atestadoIds];
+    const ilikeConds = descricoes.map((d) => {
+      params.push(`%${d}%`);
+      return `UPPER(s.descricao) LIKE UPPER($${params.length})`;
+    });
+    const rows = await this.dataSource.query<{
+      atestadoId: string;
+      descricao: string;
+      quantidade: string | null;
+      unidade: string | null;
+    }[]>(
+      `SELECT s.atestado_id AS "atestadoId", s.descricao, s.quantidade, s.unidade
+       FROM servicos_executados s
+       WHERE s.atestado_id = ANY($1)
+         AND (${ilikeConds.join(' OR ')})
+       ORDER BY s.atestado_id, s.descricao`,
+      params,
+    );
+    const map = new Map<string, ServicoBuscado[]>();
+    for (const r of rows) {
+      if (!map.has(r.atestadoId)) map.set(r.atestadoId, []);
+      map.get(r.atestadoId)!.push({
+        descricao: r.descricao,
+        quantidade: r.quantidade != null ? parseFloat(r.quantidade) : undefined,
+        unidade: r.unidade ?? undefined,
+      });
+    }
+    return map;
   }
 }
