@@ -295,6 +295,43 @@ export class ReasoningEngineService {
 
     const contextParts: string[] = [];
 
+    // COMPROVACAO / BUNDLE_SINGLE / BUNDLE_CUMULATIVE: inject qualifying atestados FIRST so that
+    // even if the context is large the definitive SQL result is always visible to the LLM.
+    // When results were found, also suppress chunks and the raw service table below — those rows
+    // can contradict the pre-computed qualification answer and cause the LLM to return NOT_FOUND.
+    if (intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE') {
+      const reqList = servicosFiltros
+        .map((s) => `• ${s.descricao}${s.minQuantidade !== undefined ? ` — mínimo: ${s.minQuantidade}` : ''}`)
+        .join('\n');
+
+      if (hasComprovacaoResults) {
+        this.logger.log(`${intent}: ${comprovacaoMatches.length} qualifying atestados found`);
+
+        let headerNote: string;
+        if (intent === 'BUNDLE_CUMULATIVE') {
+          headerNote = `Conjunto de atestados cujo somatório comprova os requisitos (${comprovacaoMatches.length} atestados no conjunto)`;
+        } else if (intent === 'BUNDLE_SINGLE') {
+          headerNote = `Conjunto mínimo de atestados cobrindo todos os serviços individualmente (${comprovacaoMatches.length} atestado${comprovacaoMatches.length !== 1 ? 's' : ''})`;
+        } else {
+          headerNote = `Atestados que comprovam os requisitos solicitados (${comprovacaoMatches.length} encontrados)`;
+        }
+
+        const atestadoBlocks = comprovacaoMatches
+          .map((r) => `[Fonte: ${r.filename}, p.1]\nEste atestado é parte da comprovação dos seguintes requisitos:\n${reqList}`)
+          .join('\n\n---\n\n');
+        contextParts.push(`\n\n**${headerNote}:**\n${atestadoBlocks}`);
+      } else if (servicosFiltros.length > 0) {
+        this.logger.warn(`${intent}: no atestado found satisfying filters`);
+        const msg =
+          intent === 'BUNDLE_CUMULATIVE'
+            ? 'O somatório dos atestados existentes não atinge as quantidades mínimas solicitadas para todos os serviços.'
+            : intent === 'BUNDLE_SINGLE'
+              ? 'Nenhum conjunto de atestados foi encontrado que cubra todos os serviços exigidos individualmente.'
+              : 'Nenhum atestado isolado foi encontrado que satisfaça simultaneamente todos os requisitos solicitados com as quantidades mínimas indicadas.';
+        contextParts.push(`\n\n**Comprovação:** ${msg}`);
+      }
+    }
+
     // For listing queries, prepend an enumeration of all matching documents as a checklist
     // so the LLM knows about every document before reading the chunks
     if (intent === 'LISTAGEM') {
@@ -336,7 +373,12 @@ export class ReasoningEngineService {
     // Add vector/keyword chunks that pass the threshold.
     // Suppressed when the query names an explicit item and SQL already found exact matches —
     // in that case chunks are unrelated noise that confuses the LLM and pollutes the sources panel.
-    if (maxSimilarity >= this.similarityThreshold && chunks.length > 0 && !exactItemMatch) {
+    // Also suppressed for COMPROVACAO/BUNDLE intents when the qualification SQL already found
+    // the answer — raw chunks can mislead the LLM into contradicting the qualification result.
+    const isComprovacaoLikeWithResults =
+      hasComprovacaoResults &&
+      (intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE');
+    if (maxSimilarity >= this.similarityThreshold && chunks.length > 0 && !exactItemMatch && !isComprovacaoLikeWithResults) {
       contextParts.push(
         chunks
           .map((c) => `[Fonte: ${c.originalFilename}, p.${c.pageNumber}]\n${c.content}`)
@@ -344,8 +386,11 @@ export class ReasoningEngineService {
       );
     }
 
-    // Inject direct SQL service matches as a structured table
-    if (hasServiceResults) {
+    // Inject direct SQL service matches as a structured table.
+    // Suppressed for COMPROVACAO/BUNDLE when the qualification SQL already determined the result —
+    // raw service rows listing individual quantities can confuse the LLM into second-guessing the
+    // pre-computed minimum-quantity qualification answer.
+    if (hasServiceResults && !isComprovacaoLikeWithResults) {
       this.logger.log(`Direct service search found ${serviceResults.length} rows for query: "${dto.query}"`);
       contextParts.push(`\n\n**Serviços encontrados diretamente no banco de dados:**\n${this.buildServiceContextTable(serviceResults)}`);
     }
@@ -369,39 +414,8 @@ export class ReasoningEngineService {
       contextParts.push(`\n\n**Obras encontradas no banco de dados:**\n${obraBlocks.join('\n\n---\n\n')}`);
     }
 
-    // COMPROVACAO / BUNDLE_SINGLE / BUNDLE_CUMULATIVE: inject qualifying atestados into LLM context
-    if (intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE') {
-      const reqList = servicosFiltros
-        .map((s) => `• ${s.descricao}${s.minQuantidade !== undefined ? ` — mínimo: ${s.minQuantidade}` : ''}`)
-        .join('\n');
-
-      if (hasComprovacaoResults) {
-        this.logger.log(`${intent}: ${comprovacaoMatches.length} qualifying atestados found`);
-
-        let headerNote: string;
-        if (intent === 'BUNDLE_CUMULATIVE') {
-          headerNote = `Conjunto de atestados cujo somatório comprova os requisitos (${comprovacaoMatches.length} atestados no conjunto)`;
-        } else if (intent === 'BUNDLE_SINGLE') {
-          headerNote = `Conjunto mínimo de atestados cobrindo todos os serviços individualmente (${comprovacaoMatches.length} atestado${comprovacaoMatches.length !== 1 ? 's' : ''})`;
-        } else {
-          headerNote = `Atestados que comprovam os requisitos solicitados (${comprovacaoMatches.length} encontrados)`;
-        }
-
-        const atestadoBlocks = comprovacaoMatches
-          .map((r) => `[Fonte: ${r.filename}, p.1]\nEste atestado é parte da comprovação dos seguintes requisitos:\n${reqList}`)
-          .join('\n\n---\n\n');
-        contextParts.push(`\n\n**${headerNote}:**\n${atestadoBlocks}`);
-      } else if (servicosFiltros.length > 0) {
-        this.logger.warn(`${intent}: no atestado found satisfying filters`);
-        const msg =
-          intent === 'BUNDLE_CUMULATIVE'
-            ? 'O somatório dos atestados existentes não atinge as quantidades mínimas solicitadas para todos os serviços.'
-            : intent === 'BUNDLE_SINGLE'
-              ? 'Nenhum conjunto de atestados foi encontrado que cubra todos os serviços exigidos individualmente.'
-              : 'Nenhum atestado isolado foi encontrado que satisfaça simultaneamente todos os requisitos solicitados com as quantidades mínimas indicadas.';
-        contextParts.push(`\n\n**Comprovação:** ${msg}`);
-      }
-    }
+    // COMPROVACAO / BUNDLE context was already injected at the TOP of contextParts above.
+    // Nothing to do here — keeping the comment as a landmark for future refactoring.
 
     if (dto.sessionId) {
       const history = await this.turnRepo.findRecentBySessionId(dto.sessionId, 5);
