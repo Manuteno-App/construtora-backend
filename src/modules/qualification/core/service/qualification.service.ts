@@ -2,14 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
-  BundleCoverageResult,
-  CumulativeResult,
-  QualificationFilters,
-  QualificationSource,
-  ResolvedDescricao,
-  ServiceCoverage,
-  ServiceRequirement,
-  ServicoBuscado,
+    BundleCoverageResult,
+    CumulativeResult,
+    QualificationFilters,
+    QualificationSource,
+    ResolvedDescricao,
+    ServiceCoverage,
+    ServiceRequirement,
+    ServicoBuscado,
 } from '../../public-api/interface/qualification-api.interface';
 
 interface QualificationSourceRow {
