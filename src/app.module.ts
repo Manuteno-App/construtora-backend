@@ -1,21 +1,21 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { TerminusModule } from '@nestjs/terminus';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { configuration, configurationSchema } from './config/configuration';
+import { HealthController } from './health.controller';
+import { AuthModule } from './modules/auth/auth.module';
+import { DocumentsModule } from './modules/documents/documents.module';
+import { ExtractionModule } from './modules/extraction/extraction.module';
+import { IndexingModule } from './modules/indexing/indexing.module';
 import { DatabaseModule } from './modules/infrastructure/database/database.module';
 import { QueueModule } from './modules/infrastructure/queue/queue.module';
 import { StorageModule } from './modules/infrastructure/storage/storage.module';
-import { DocumentsModule } from './modules/documents/documents.module';
 import { IngestionModule } from './modules/ingestion/ingestion.module';
-import { ExtractionModule } from './modules/extraction/extraction.module';
-import { IndexingModule } from './modules/indexing/indexing.module';
 import { IntelligenceModule } from './modules/intelligence/intelligence.module';
-import { AuthModule } from './modules/auth/auth.module';
-import { QualificationModule } from './modules/qualification/qualification.module';
 import { McpModule } from './modules/mcp/mcp.module';
-import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
-import { HealthController } from './health.controller';
+import { QualificationModule } from './modules/qualification/qualification.module';
 
 @Module({
   imports: [
