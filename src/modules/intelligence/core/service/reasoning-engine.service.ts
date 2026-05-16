@@ -476,7 +476,22 @@ export class ReasoningEngineService {
         trecho: servicosFiltros.map((s) => s.descricao).join(', '),
       }));
 
-    const sources: SourceRef[] = [...chunkSources, ...serviceSources, ...qtySources, ...obraSources, ...comprovacaoSources];
+    // For qualification intents, when the SQL path found results, expose ONLY those atestados
+    // in the sources panel. The other arrays (chunks, service, qty, obras) were used for LLM
+    // context but are noise in the sources panel for these intents.
+    // Fall back to the full combined array when qualification found nothing (RAG fallback path).
+    const isComprovacaoIntent =
+      intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE';
+    const qualSources: SourceRef[] = comprovacaoMatches.map((r) => ({
+      atestadoId: r.atestadoId,
+      filename: r.filename,
+      pagina: 1,
+      trecho: servicosFiltros.map((s) => s.descricao).join(', '),
+    }));
+    const sources: SourceRef[] =
+      isComprovacaoIntent && qualSources.length > 0
+        ? qualSources
+        : [...chunkSources, ...serviceSources, ...qtySources, ...obraSources, ...comprovacaoSources];
     const context = this.truncateContext(contextParts.join('\n\n'));
 
     return { notFound: false, chunks, sources, context, intent };
