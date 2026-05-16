@@ -152,10 +152,11 @@ export class ReasoningEngineService {
 
       const isNotFound = fullResponse.includes(NOT_FOUND_MESSAGE);
       const dedupedSources = this.deduplicateSources(sources);
-      // COMPROVACAO: always expose all retrieved sources — the LLM summarises requirements without
-      // citing every [Fonte:] bracket, so response-filtering would drop valid sources.
+      // COMPROVACAO/BUNDLE: always expose all retrieved sources — the LLM summarises requirements
+      // without citing every [Fonte:] bracket, so response-filtering would drop valid sources.
       // All other intents: filter by citations so the sources panel matches what the LLM cited.
-      const filteredSources = isNotFound ? [] : intent === 'COMPROVACAO' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, fullResponse);
+      const isComprovacaoLike = intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE';
+      const filteredSources = isNotFound ? [] : isComprovacaoLike ? dedupedSources : this.filterSourcesByResponse(dedupedSources, fullResponse);
       emit({ type: 'sources', sources: filteredSources });
       emit({ type: 'done' });
 
@@ -205,9 +206,10 @@ export class ReasoningEngineService {
     const text = completion.choices[0]?.message?.content ?? NOT_FOUND_MESSAGE;
     const isNotFound = text.includes(NOT_FOUND_MESSAGE);
     const dedupedSources = this.deduplicateSources(sources);
-    // COMPROVACAO: always expose all retrieved sources.
+    // COMPROVACAO/BUNDLE: always expose all retrieved sources.
     // All other intents: filter by citations so the sources panel matches what the LLM cited.
-    const filteredSources = isNotFound ? [] : intent === 'COMPROVACAO' ? dedupedSources : this.filterSourcesByResponse(dedupedSources, text);
+    const isComprovacaoLike = intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE';
+    const filteredSources = isNotFound ? [] : isComprovacaoLike ? dedupedSources : this.filterSourcesByResponse(dedupedSources, text);
     await this.persistTurns(dto.query, text, dto.sessionId, filteredSources);
 
     return { answer: text, sources: filteredSources, notFound: isNotFound };
@@ -367,24 +369,37 @@ export class ReasoningEngineService {
       contextParts.push(`\n\n**Obras encontradas no banco de dados:**\n${obraBlocks.join('\n\n---\n\n')}`);
     }
 
-    // COMPROVACAO context: inject matching atestados and the service requirements
-    if (intent === 'COMPROVACAO') {
+    // COMPROVACAO / BUNDLE_SINGLE / BUNDLE_CUMULATIVE: inject qualifying atestados into LLM context
+    if (intent === 'COMPROVACAO' || intent === 'BUNDLE_SINGLE' || intent === 'BUNDLE_CUMULATIVE') {
+      const reqList = servicosFiltros
+        .map((s) => `• ${s.descricao}${s.minQuantidade !== undefined ? ` — mínimo: ${s.minQuantidade}` : ''}`)
+        .join('\n');
+
       if (hasComprovacaoResults) {
-        this.logger.log(`COMPROVACAO: ${comprovacaoMatches.length} qualifying atestados found`);
-        const reqList = servicosFiltros
-          .map((s) => `• ${s.descricao}${s.minQuantidade !== undefined ? ` — mínimo: ${s.minQuantidade}` : ''}`)
-          .join('\n');
+        this.logger.log(`${intent}: ${comprovacaoMatches.length} qualifying atestados found`);
+
+        let headerNote: string;
+        if (intent === 'BUNDLE_CUMULATIVE') {
+          headerNote = `Conjunto de atestados cujo somatório comprova os requisitos (${comprovacaoMatches.length} atestados no conjunto)`;
+        } else if (intent === 'BUNDLE_SINGLE') {
+          headerNote = `Conjunto mínimo de atestados cobrindo todos os serviços individualmente (${comprovacaoMatches.length} atestado${comprovacaoMatches.length !== 1 ? 's' : ''})`;
+        } else {
+          headerNote = `Atestados que comprovam os requisitos solicitados (${comprovacaoMatches.length} encontrados)`;
+        }
+
         const atestadoBlocks = comprovacaoMatches
-          .map((r) => `[Fonte: ${r.filename}, p.1]\nEste atestado satisfaz os seguintes requisitos:\n${reqList}`)
+          .map((r) => `[Fonte: ${r.filename}, p.1]\nEste atestado é parte da comprovação dos seguintes requisitos:\n${reqList}`)
           .join('\n\n---\n\n');
-        contextParts.push(
-          `\n\n**Atestados que comprovam os requisitos solicitados (${comprovacaoMatches.length} encontrados):**\n${atestadoBlocks}`,
-        );
+        contextParts.push(`\n\n**${headerNote}:**\n${atestadoBlocks}`);
       } else if (servicosFiltros.length > 0) {
-        this.logger.warn(`COMPROVACAO: no atestado found satisfying all ${servicosFiltros.length} service filters`);
-        contextParts.push(
-          `\n\n**Comprovação:** Nenhum atestado isolado foi encontrado que satisfaça simultaneamente todos os requisitos solicitados com as quantidades mínimas indicadas.`,
-        );
+        this.logger.warn(`${intent}: no atestado found satisfying filters`);
+        const msg =
+          intent === 'BUNDLE_CUMULATIVE'
+            ? 'O somatório dos atestados existentes não atinge as quantidades mínimas solicitadas para todos os serviços.'
+            : intent === 'BUNDLE_SINGLE'
+              ? 'Nenhum conjunto de atestados foi encontrado que cubra todos os serviços exigidos individualmente.'
+              : 'Nenhum atestado isolado foi encontrado que satisfaça simultaneamente todos os requisitos solicitados com as quantidades mínimas indicadas.';
+        contextParts.push(`\n\n**Comprovação:** ${msg}`);
       }
     }
 
