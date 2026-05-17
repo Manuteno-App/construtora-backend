@@ -31,6 +31,12 @@ export class ExtractionService {
     const fullText = chunks.map((c) => c.content).join('\n\n---\n\n');
     const contextText = fullText.slice(0, 6000);
 
+    this.logger.log(
+      `Extraction context: ${fullText.length} chars total, ${chunks.length} chunks. ` +
+        `keyValuePairs keys: [${Object.keys(params.keyValuePairs ?? {}).join(', ')}]. ` +
+        `Preview: ${fullText.slice(0, 300).replace(/\n/g, ' ')}`,
+    );
+
     const entities = await this.extractEntitiesFromText(
       contextText,
       params.keyValuePairs ?? {},
