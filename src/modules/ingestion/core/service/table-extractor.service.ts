@@ -13,22 +13,40 @@ export interface ServicoItem {
 // All-uppercase header pattern (e.g. TERRAPLENAGEM, SERVIÇOS PRELIMINARES)
 const CATEGORY_HEADER_RE = /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÜ\s\\/(),.-]{5,}$/;
 
-// Legacy regex for raw text fallback
+// Legacy regex for raw text fallback — more flexible spacing
 const TABLE_ROW_RE =
-  /^\s*(\S{1,20})\s{2,}(.{5,60})\s{2,}(\w{1,10})\s{2,}([\d.,]+)\s*$/;
+  /^\s*([A-Z0-9][\w./\-]{0,19})\s{2,}(.{5,80?}?)\s{2,}(m[²³]?|km|un|cj|vb|ton|l\b|m\b|m2|m3|ha|gl|sg|mês|mes|hr|h\b|pç|pc)\s{1,}([\d.,]+)\s*$/i;
 
 @Injectable()
 export class TableExtractorService {
   /**
    * Picks the best extraction strategy.
-   * Uses structured Textract TABLE blocks when available; falls back to regex over raw text.
+   * Priority: (1) rawServiceRows from Vision structured block, (2) Textract TABLE blocks, (3) regex over raw text.
    */
   extractBest(ocrResult: OcrResult): ServicoItem[] {
+    if (ocrResult.rawServiceRows && ocrResult.rawServiceRows.length > 0) {
+      return this.extractFromVisionRows(ocrResult.rawServiceRows);
+    }
     if (ocrResult.tables.length > 0) {
       const items = this.extractFromTables(ocrResult.tables);
       if (items.length > 0) return items;
     }
     return this.extractFromText(ocrResult.text);
+  }
+
+  /** Convert rawServiceRows (from Vision CSV block) into ServicoItem[]. */
+  extractFromVisionRows(rows: NonNullable<OcrResult['rawServiceRows']>): ServicoItem[] {
+    return rows.map((r) => {
+      const raw = r.quantidade ?? '';
+      const quantidade = raw ? parseFloat(raw.replace(/\./g, '').replace(',', '.')) : NaN;
+      return {
+        categoria: r.categoria ?? 'GERAL',
+        codigo:    r.codigo   || undefined,
+        descricao: r.descricao,
+        unidade:   r.unidade  || undefined,
+        quantidade: isNaN(quantidade) ? undefined : quantidade,
+      };
+    });
   }
 
   /** Parse structured TABLE blocks returned by Textract AnalyzeDocument */
@@ -55,11 +73,11 @@ export class TableExtractorService {
       let codigoCol = -1;
 
       for (const cell of table.cells.filter((c) => c.rowIndex === headerRow)) {
-        const t = cell.text.toUpperCase();
-        if (/NATUREZA|DESCRI[CÇ]/.test(t)) descCol = cell.colIndex;
-        else if (/^UNID/.test(t)) unidadeCol = cell.colIndex;
-        else if (/QUANT/.test(t)) quantidadeCol = cell.colIndex;
-        else if (/^C[OÓ]D/.test(t)) codigoCol = cell.colIndex;
+        const t = cell.text.toUpperCase().trim();
+        if (/NATUREZA|DESCRI[CÇ]|SERVI[CÇ]O/.test(t)) descCol = cell.colIndex;
+        else if (/^UNID|^UN\.?$/.test(t)) unidadeCol = cell.colIndex;
+        else if (/QUANT|QTD|QDE/.test(t)) quantidadeCol = cell.colIndex;
+        else if (/^C[OÓ]D|^ITEM$|^N[º°.]\s*$|^#/.test(t)) codigoCol = cell.colIndex;
       }
 
       // Heuristic fallback when header row is missing or not recognised:
@@ -85,10 +103,12 @@ export class TableExtractorService {
 
         const qRaw =
           quantidadeCol >= 0 ? (grid.get(`${rowIdx},${quantidadeCol}`) ?? '') : '';
+        const hasQuantity = qRaw.trim() !== '' && qRaw.trim() !== '-';
 
-        // Category header: all-caps in the description column, no quantity value
-        if (CATEGORY_HEADER_RE.test(descText) && !qRaw.trim()) {
-          currentCategory = descText;
+        // Category/subcategory: has a description but no valid quantity.
+        // Handles both all-caps headers AND hierarchical code rows (01, 01.01)
+        if (!hasQuantity) {
+          if (descText) currentCategory = descText;
           continue;
         }
 

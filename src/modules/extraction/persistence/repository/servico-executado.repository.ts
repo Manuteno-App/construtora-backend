@@ -72,6 +72,10 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     return qb.getMany();
   }
 
+  async deleteByAtestadoId(atestadoId: string): Promise<void> {
+    await this.query('DELETE FROM servicos_executados WHERE atestado_id = $1', [atestadoId]);
+  }
+
   async upsertMany(rows: ServicoExecutadoRow[]): Promise<void> {
     if (rows.length === 0) return;
     await this.createQueryBuilder('s')

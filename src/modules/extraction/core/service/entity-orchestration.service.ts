@@ -10,10 +10,16 @@ export interface ExtractedEntities {
   obra?: {
     nome: string;
     local?: string;
+    cidade?: string;
+    estado?: string;
     tipo?: string;
     dataInicio?: string;
     dataFim?: string;
+    dataAtestado?: string;
     valor?: number;
+    valorAtestado?: number;
+    cliente?: string;
+    engenheiro?: string;
     art?: string;
   };
   empresas?: Array<{ nome: string; cnpj?: string; tipo?: string }>;
@@ -49,10 +55,16 @@ export class EntityOrchestrationService {
         atestadoId,
         nome: entities.obra.nome,
         local: entities.obra.local,
+        cidade: entities.obra.cidade,
+        estado: entities.obra.estado,
         tipo: entities.obra.tipo,
         dataInicio: this.parseDate(entities.obra.dataInicio),
         dataFim: this.parseDate(entities.obra.dataFim),
+        dataAtestado: this.parseDate(entities.obra.dataAtestado),
         valor: entities.obra.valor,
+        valorAtestado: entities.obra.valorAtestado,
+        cliente: entities.obra.cliente,
+        engenheiro: entities.obra.engenheiro,
         art: entities.obra.art,
       });
       savedObraId = obra.id;

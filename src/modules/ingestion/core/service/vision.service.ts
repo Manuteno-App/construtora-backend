@@ -28,6 +28,14 @@ export interface OcrResult {
   tables: TextractTable[];
   keyValuePairs: Record<string, string>;
   avgConfidence: number;
+  /** Service rows extracted directly from the Vision structured table block */
+  rawServiceRows?: Array<{
+    codigo?: string;
+    descricao: string;
+    unidade?: string;
+    quantidade?: string;
+    categoria?: string;
+  }>;
 }
 
 /**
@@ -101,14 +109,20 @@ export class VisionService implements OnModuleInit {
       if (pageImages.length === 0) return empty;
 
       const visionText = await this.callVisionApi(pageImages);
-      const pages = this.splitIntoPages(visionText);
+
+      // Extract structured blocks before splitting into pages
+      const keyValuePairs = this.parseHeaderBlock(visionText);
+      const rawServiceRows = this.parseTableBlock(visionText);
+      const cleanText = this.removeStructuredBlocks(visionText);
+      const pages = this.splitIntoPages(cleanText);
 
       return {
         text: pages.map((p) => p.text).join('\n\n'),
         pages,
         tables: [],
-        keyValuePairs: {},
+        keyValuePairs,
         avgConfidence: 100,
+        rawServiceRows,
       };
     } catch (err) {
       this.logger.error('Vision analysis failed', err);
@@ -203,13 +217,19 @@ export class VisionService implements OnModuleInit {
         {
           role: 'system',
           content:
-            'Você é especialista em leitura de certidões de obras de construção civil (CAT) do Brasil. ' +
-            'Extraia fielmente todo o texto, preservando:\n' +
-            '- Cabeçalho: Contratante, Empreiteira, CNPJ, Contrato, Localização, Valor dos Serviços, Período\n' +
-            '- Tabelas de NATUREZA DOS SERVIÇOS com colunas UNIDADE e QUANTIDADE\n' +
-            '- Categorias em maiúsculas (ex: TERRAPLENAGEM, PAVIMENTAÇÃO DO SISTEMA VIÁRIO)\n' +
-            'Preserve números decimais com vírgula (ex: 1.234,56). ' +
-            'Separe as páginas com "---PAGE {N} END---".',
+            'Você é especialista em leitura de Atestados de Capacidade Técnica (CAT) de obras de construção civil brasileiras.\n' +
+            'Ao processar o documento, produza TRÊS seções na sua resposta:\n\n' +
+            '1. Bloco de cabeçalho JSON entre os marcadores ===HEADER_JSON_START=== e ===HEADER_JSON_END===\n' +
+            '   Formato: { "obra": "...", "contratante": "...", "contratada": "...", "cnpj": "...", "contrato": "...", ' +
+            '"cidade": "...", "estado": "UF", "valor_obra": "...", "valor_atestado": "...", ' +
+            '"data_atestado": "DD/MM/AAAA", "data_inicio": "DD/MM/AAAA", "data_fim": "DD/MM/AAAA", "engenheiro": "..." }\n\n' +
+            '2. Tabela de serviços como CSV entre ===TABLE_CSV_START=== e ===TABLE_CSV_END===\n' +
+            '   Cabeçalho obrigatório: codigo,descricao,unidade,quantidade,categoria\n' +
+            '   - Linhas de categoria/seção (sem quantidade): deixe unidade e quantidade em branco\n' +
+            '   - Quantidade vazia ou "-": deixe em branco\n' +
+            '   - Preserve números decimais com vírgula (ex: 1.234,56)\n' +
+            '   - Não use aspas desnecessárias. Use aspas duplas apenas se o campo contiver vírgula\n\n' +
+            '3. Transcrição fiel do texto restante, com separador "---PAGE {N} END---" ao final de cada página.',
         },
         { role: 'user', content: userContent },
       ],
@@ -217,6 +237,97 @@ export class VisionService implements OnModuleInit {
     });
 
     return response.choices[0]?.message?.content ?? '';
+  }
+
+  private parseHeaderBlock(text: string): Record<string, string> {
+    const match = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
+    if (!match) return {};
+    try {
+      const parsed = JSON.parse(match[1]) as Record<string, unknown>;
+      const result: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v && typeof v === 'string' && v.trim()) result[k] = v.trim();
+      }
+      return result;
+    } catch {
+      this.logger.warn('Failed to parse Vision header JSON block');
+      return {};
+    }
+  }
+
+  private parseTableBlock(
+    text: string,
+  ): OcrResult['rawServiceRows'] {
+    const match = /===TABLE_CSV_START===\s*([\s\S]*?)\s*===TABLE_CSV_END===/i.exec(text);
+    if (!match) return undefined;
+
+    const lines = match[1].split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) return undefined;
+
+    // Parse CSV header
+    const header = this.parseCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
+    const codigoIdx    = header.indexOf('codigo');
+    const descricaoIdx = header.indexOf('descricao');
+    const unidadeIdx   = header.indexOf('unidade');
+    const quantidadeIdx = header.indexOf('quantidade');
+    const categoriaIdx = header.indexOf('categoria');
+
+    if (descricaoIdx === -1) return undefined;
+
+    const rows: NonNullable<OcrResult['rawServiceRows']> = [];
+    let currentCategory = 'GERAL';
+
+    for (const line of lines.slice(1)) {
+      const cols = this.parseCsvLine(line);
+      const descricao = cols[descricaoIdx]?.trim() ?? '';
+      if (!descricao) continue;
+
+      const quantidade = cols[quantidadeIdx]?.trim() ?? '';
+      const unidade    = cols[unidadeIdx]?.trim() ?? '';
+
+      // Row without quantity → category/subcategory
+      if (!quantidade || quantidade === '-') {
+        currentCategory = descricao;
+        continue;
+      }
+
+      rows.push({
+        codigo:     codigoIdx   >= 0 ? (cols[codigoIdx]?.trim()   || undefined) : undefined,
+        descricao,
+        unidade:    unidade || undefined,
+        quantidade: quantidade || undefined,
+        categoria:  categoriaIdx >= 0 ? (cols[categoriaIdx]?.trim() || currentCategory) : currentCategory,
+      });
+    }
+
+    return rows.length > 0 ? rows : undefined;
+  }
+
+  /** Minimal CSV line parser that handles double-quoted fields with commas. */
+  private parseCsvLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current);
+    return result;
+  }
+
+  private removeStructuredBlocks(text: string): string {
+    return text
+      .replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '')
+      .replace(/===TABLE_CSV_START===[\s\S]*?===TABLE_CSV_END===/gi, '')
+      .trim();
   }
 
   private splitIntoPages(

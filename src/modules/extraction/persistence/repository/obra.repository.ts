@@ -8,10 +8,16 @@ export interface CreateObraData {
   atestadoId: string;
   nome: string;
   local?: string;
+  cidade?: string;
+  estado?: string;
   tipo?: string;
   dataInicio?: Date;
   dataFim?: Date;
+  dataAtestado?: Date;
   valor?: number;
+  valorAtestado?: number;
+  cliente?: string;
+  engenheiro?: string;
   art?: string;
 }
 
@@ -57,6 +63,10 @@ export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
       where: { atestadoId },
       relations: ['contratos', 'contratos.empresa'],
     });
+  }
+
+  async deleteByAtestadoId(atestadoId: string): Promise<void> {
+    await this.query('DELETE FROM obras WHERE atestado_id = $1', [atestadoId]);
   }
 
   async createAndSave(data: CreateObraData): Promise<Obra> {

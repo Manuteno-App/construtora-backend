@@ -56,9 +56,26 @@ export class ExtractionService {
       ? `\nCAMPOS JÁ DETECTADOS AUTOMATICAMENTE (use como referência):\n${hintLines}\n`
       : '';
 
-    const prompt = `Você é um extrator de entidades de atestados de execução de obras.
+    const prompt = `Você é um extrator especialista em Atestados de Capacidade Técnica (CAT) de obras de construção civil brasileiras.
 Analise o texto abaixo e extraia as informações no formato JSON especificado.
 Retorne SOMENTE o JSON, sem explicações adicionais.${hintsSection}
+
+INSTRUÇÕES:
+- "obra.nome": nome ou descrição da obra/serviço executado
+- "obra.cidade": cidade onde a OBRA foi executada (não a sede da empresa)
+- "obra.estado": UF de 2 letras onde a OBRA foi executada
+- "obra.local": cidade e estado combinados (ex: "Santana do Ipanema/AL"), use se cidade/estado não forem separáveis
+- "obra.tipo": tipo de obra (ex: pavimentação, esgotamento sanitário, edificação)
+- "obra.dataAtestado": data de emissão do atestado/certidão (campo "data" ou "emitido em")
+- "obra.dataInicio": data de início dos serviços
+- "obra.dataFim": data de conclusão dos serviços
+- "obra.valor": valor total da obra/contrato em reais (número sem R$)
+- "obra.valorAtestado": valor declarado no atestado/certidão em reais (pode diferir do valor da obra)
+- "obra.cliente": nome da empresa/órgão CONTRATANTE (quem emitiu o atestado)
+- "obra.engenheiro": nome do engenheiro responsável técnico mencionado no documento
+- "obra.art": número da ART/RRT
+- "empresas": lista de empresas mencionadas com tipo CONTRATANTE ou CONTRATADA
+- "contrato.numero": número do contrato (ex: "0.00.08.0053-00")
 
 TEXTO:
 ${text}
@@ -66,16 +83,22 @@ ${text}
 JSON esperado:
 {
   "obra": {
-    "nome": "string",
-    "local": "string (cidade/estado)",
-    "tipo": "string (ex: pavimentação, drenagem, edificação)",
+    "nome": "string ou null",
+    "cidade": "string ou null",
+    "estado": "UF 2 letras ou null",
+    "local": "string ou null",
+    "tipo": "string ou null",
+    "dataAtestado": "YYYY-MM-DD ou null",
     "dataInicio": "YYYY-MM-DD ou null",
     "dataFim": "YYYY-MM-DD ou null",
     "valor": number ou null,
-    "art": "número da ART ou null"
+    "valorAtestado": number ou null,
+    "cliente": "nome do contratante ou null",
+    "engenheiro": "nome do engenheiro ou null",
+    "art": "string ou null"
   },
   "empresas": [
-    { "nome": "string", "cnpj": "string", "tipo": "CONTRATANTE ou CONTRATADA" }
+    { "nome": "string", "cnpj": "string ou null", "tipo": "CONTRATANTE ou CONTRATADA" }
   ],
   "contrato": {
     "numero": "string ou null",
@@ -88,7 +111,7 @@ JSON esperado:
       model: this.extractionModel,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
-      max_tokens: 1000,
+      max_tokens: 2000,
     });
 
     const content = response.choices[0]?.message?.content ?? '{}';

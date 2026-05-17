@@ -14,7 +14,7 @@ export const configurationSchema = Joi.object({
 
   OPENAI_API_KEY: Joi.string().required(),
   CHAT_MODEL: Joi.string().default('gpt-4o-mini'),
-  EXTRACTION_MODEL: Joi.string().default('gpt-4o-mini'),
+  EXTRACTION_MODEL: Joi.string().default('gpt-4o'),
 
   EMBEDDING_MODEL: Joi.string().default('text-embedding-3-small'),
   EMBEDDING_DIMENSIONS: Joi.number().default(1536),

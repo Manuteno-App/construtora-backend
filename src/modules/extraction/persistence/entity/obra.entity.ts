@@ -29,6 +29,12 @@ export class Obra {
   local?: string;
 
   @Column({ nullable: true, type: 'text' })
+  cidade?: string;
+
+  @Column({ nullable: true, length: 2 })
+  estado?: string;
+
+  @Column({ nullable: true, type: 'text' })
   tipo?: string;
 
   @Column({ name: 'data_inicio', nullable: true, type: 'date' })
@@ -37,8 +43,20 @@ export class Obra {
   @Column({ name: 'data_fim', nullable: true, type: 'date' })
   dataFim?: Date;
 
+  @Column({ name: 'data_atestado', nullable: true, type: 'date' })
+  dataAtestado?: Date;
+
   @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true })
   valor?: number;
+
+  @Column({ name: 'valor_atestado', type: 'numeric', precision: 18, scale: 2, nullable: true })
+  valorAtestado?: number;
+
+  @Column({ nullable: true, type: 'text' })
+  cliente?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  engenheiro?: string;
 
   @Column({ nullable: true })
   art?: string;

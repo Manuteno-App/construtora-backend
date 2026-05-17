@@ -15,6 +15,20 @@ const pdfParse = require('pdf-parse');
 const TARGET_CHUNK_TOKENS = 800;
 const CHUNK_OVERLAP_TOKENS = 75;
 
+/** Regex patterns to extract header key-value hints from raw PDF text. */
+const HEADER_PATTERNS: Array<[string, RegExp]> = [
+  ['obra',          /(?:obra|projeto|objeto)[:\s]+([^\n]{5,120})/i],
+  ['contratante',   /(?:contratante|cliente|tomador)[:\s]+([^\n]{5,100})/i],
+  ['contratada',    /(?:contratada|empreiteira|executora)[:\s]+([^\n]{5,100})/i],
+  ['contrato',      /(?:contrato|n[uú]mero|n[º°.])\s*[:\s.°#]*\s*([A-Z0-9][A-Z0-9/.\-]{2,30})/i],
+  ['valor_obra',    /(?:valor total|valor da obra|valor global)[:\s]+R?\$?\s*([\d.,]+)/i],
+  ['valor_atestado',/(?:valor atestado|valor dos servi[cç]os)[:\s]+R?\$?\s*([\d.,]+)/i],
+  ['engenheiro',    /(?:engenheiro|resp[.\s]*t[eé]cnico|responsável)[:\s]+([^\n]{5,80})/i],
+  ['cidade',        /(?:munic[ií]pio|cidade)[:\s]+([^\n,]{3,60})/i],
+  ['estado',        /\b(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/],
+  ['data_atestado', /(?:data|emitido em|emiss[ãa]o)[:\s]+(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})/i],
+];
+
 export interface IngestionJobPayload {
   atestadoId: string;
 }
@@ -107,6 +121,7 @@ export class IngestionProcessor extends WorkerHost {
 
       fullText = this.preProcess(fullText);
       const tabelaServicos = this.tableExtractor.extract(fullText);
+      keyValuePairs = this.extractHeaderHints(fullText);
       const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
       const savedChunks = await this.chunkRepo.saveMany(
         chunks.map((c, i): CreateChunkData => ({
@@ -210,5 +225,19 @@ export class IngestionProcessor extends WorkerHost {
       if (p.text.includes(snippet)) return p.pageNumber;
     }
     return undefined;
+  }
+
+  /**
+   * Runs the HEADER_PATTERNS against the first 3000 chars of the raw text
+   * and returns matched key-value hints to pass to the extraction LLM.
+   */
+  private extractHeaderHints(text: string): Record<string, string> {
+    const sample = text.slice(0, 3000);
+    const hints: Record<string, string> = {};
+    for (const [key, re] of HEADER_PATTERNS) {
+      const m = re.exec(sample);
+      if (m?.[1]) hints[key] = m[1].trim();
+    }
+    return hints;
   }
 }
