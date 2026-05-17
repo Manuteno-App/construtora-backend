@@ -130,6 +130,7 @@ JSON esperado:
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       max_tokens: 2000,
+      response_format: { type: 'json_object' },
     });
 
     const content = response.choices[0]?.message?.content ?? '{}';
