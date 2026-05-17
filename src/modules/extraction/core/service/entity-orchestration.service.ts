@@ -50,7 +50,7 @@ export class EntityOrchestrationService {
   ): Promise<{ obraId?: string }> {
     let savedObraId: string | undefined;
 
-    if (entities.obra) {
+    if (entities.obra?.nome) {
       const obra = await this.obraRepo.createAndSave({
         atestadoId,
         nome: entities.obra.nome,

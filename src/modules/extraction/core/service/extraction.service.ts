@@ -36,6 +36,19 @@ export class ExtractionService {
       params.keyValuePairs ?? {},
     );
 
+    // Apply Vision header hints as fallbacks when LLM extraction returned null
+    const kv = params.keyValuePairs ?? {};
+    if (!entities.obra && kv['obra']) {
+      entities.obra = { nome: kv['obra'] };
+    }
+    if (entities.obra) {
+      (entities.obra as Record<string, unknown>)['nome'] ??= kv['obra'];
+      (entities.obra as Record<string, unknown>)['cliente'] ??= kv['contratante'];
+      (entities.obra as Record<string, unknown>)['cidade'] ??= kv['cidade'];
+      (entities.obra as Record<string, unknown>)['estado'] ??= kv['estado'];
+      (entities.obra as Record<string, unknown>)['engenheiro'] ??= kv['engenheiro'];
+    }
+
     let tabelaServicos = params.tabelaServicos;
     if (tabelaServicos.length === 0) {
       this.logger.log('No services from ingestion — running GPT services extraction');
