@@ -139,11 +139,12 @@ export class VisionService implements OnModuleInit {
     // Disable the web worker — we render synchronously in Node.js
     pdfjsLib.GlobalWorkerOptions.workerSrc = '';
 
-    const nodeCanvasFactory = {
+    // pdfjs-dist v5 requires CanvasFactory to be a class (constructor), not a plain object
+    class NodeCanvasFactory {
       create(width: number, height: number) {
         const canvas = createCanvas(width, height);
         return { canvas, context: canvas.getContext('2d') };
-      },
+      }
       reset(
         obj: { canvas: ReturnType<CanvasLib['createCanvas']> },
         width: number,
@@ -151,17 +152,18 @@ export class VisionService implements OnModuleInit {
       ) {
         obj.canvas.width = width;
         obj.canvas.height = height;
-      },
+      }
       destroy(obj: { canvas: ReturnType<CanvasLib['createCanvas']> }) {
         obj.canvas.width = 0;
         obj.canvas.height = 0;
-      },
-    };
+      }
+    }
+    const nodeCanvasFactory = new NodeCanvasFactory();
 
     const pdfDoc = await pdfjsLib
       .getDocument({
         data: new Uint8Array(buffer),
-        CanvasFactory: nodeCanvasFactory as unknown as object,
+        CanvasFactory: NodeCanvasFactory as unknown as object,
         useSystemFonts: true,
         disableFontFace: true,
       })
