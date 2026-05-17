@@ -256,7 +256,7 @@ export class VisionService implements OnModuleInit {
   }
 
   private isRefusal(text: string): boolean {
-    if (!text || text.trim().length < 100) return false;
+    if (!text || text.trim().length === 0) return false;
     const lower = text.toLowerCase();
     return (
       lower.includes("i'm sorry") ||
