@@ -1,10 +1,10 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  JoinColumn,
-  OneToMany,
+    Column,
+    Entity,
+    JoinColumn,
+    ManyToOne,
+    OneToMany,
+    PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Atestado } from '../../../documents/persistence/entity/atestado.entity';
 import { Contrato } from './contrato.entity';
