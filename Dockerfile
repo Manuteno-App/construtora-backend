@@ -1,5 +1,5 @@
 # ── Stage 1: build ──────────────────────────────────────────────────────────
-FROM node:20 AS builder
+FROM node:24 AS builder
 WORKDIR /app
 
 COPY package*.json ./
@@ -9,7 +9,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: production ──────────────────────────────────────────────────────
-FROM node:20 AS production
+FROM node:24 AS production
 WORKDIR /app
 
 # Copy all node_modules from builder (includes native addons + devDeps for
