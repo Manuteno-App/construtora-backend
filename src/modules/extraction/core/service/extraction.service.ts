@@ -57,9 +57,15 @@ export class ExtractionService {
 
     let tabelaServicos = params.tabelaServicos;
     if (tabelaServicos.length === 0) {
-      this.logger.log('No services from ingestion — running GPT services extraction');
-      tabelaServicos = await this.extractServicosFromText(fullText);
-      this.logger.log(`GPT services extraction found ${tabelaServicos.length} items`);
+      if (fullText.length < 500) {
+        this.logger.warn(
+          `Skipping services extraction — text too short (${fullText.length} chars), likely OCR refusal or empty document`,
+        );
+      } else {
+        this.logger.log('No services from ingestion — running GPT services extraction');
+        tabelaServicos = await this.extractServicosFromText(fullText);
+        this.logger.log(`GPT services extraction found ${tabelaServicos.length} items`);
+      }
     }
 
     await this.orchestration.persistExtractedEntities(

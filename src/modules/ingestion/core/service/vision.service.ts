@@ -244,7 +244,56 @@ export class VisionService implements OnModuleInit {
       max_tokens: 4096,
     });
 
-    return response.choices[0]?.message?.content ?? '';
+    const content = response.choices[0]?.message?.content ?? '';
+
+    // Detect GPT-4o content-policy refusals and retry with a minimal fallback prompt
+    if (this.isRefusal(content)) {
+      this.logger.warn('GPT-4o Vision refused primary prompt — retrying with fallback prompt');
+      return this.callVisionApiFallback(pageImages);
+    }
+
+    return content;
+  }
+
+  private isRefusal(text: string): boolean {
+    if (!text || text.trim().length < 100) return false;
+    const lower = text.toLowerCase();
+    return (
+      lower.includes("i'm sorry") ||
+      lower.includes('i cannot assist') ||
+      lower.includes("i can't assist") ||
+      lower.includes("i can't help") ||
+      lower.includes('i am unable to') ||
+      lower.includes("i'm unable to")
+    );
+  }
+
+  private async callVisionApiFallback(pageImages: string[]): Promise<string> {
+    const userContent: OpenAI.Chat.ChatCompletionContentPart[] = [
+      {
+        type: 'text',
+        text: 'Please transcribe all the text you can see in this document image, including tables, headers, and all fields. Output the raw text only.',
+      },
+      ...pageImages.map(
+        (img): OpenAI.Chat.ChatCompletionContentPart => ({
+          type: 'image_url' as const,
+          image_url: { url: `data:image/png;base64,${img}`, detail: 'high' },
+        }),
+      ),
+    ];
+
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: userContent }],
+      max_tokens: 4096,
+    });
+
+    const content = response.choices[0]?.message?.content ?? '';
+    if (this.isRefusal(content)) {
+      this.logger.warn('GPT-4o Vision refused fallback prompt too — returning empty result');
+      return '';
+    }
+    return content;
   }
 
   private parseHeaderBlock(text: string): Record<string, string> {
