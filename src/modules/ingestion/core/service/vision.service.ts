@@ -136,8 +136,14 @@ export class VisionService implements OnModuleInit {
     const { createCanvas } = this.canvasLib!;
     const pdfjsLib = this.pdfjsLib!;
 
-    // Disable the web worker — we render synchronously in Node.js
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+    // pdfjs-dist v5 requires a real file:// URL — empty string causes "fake worker" failure
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { pathToFileURL } = require('url') as typeof import('url');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const workerPath = require.resolve('pdfjs-dist/build/pdf.worker.mjs');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).toString();
+    }
 
     // pdfjs-dist v5 requires CanvasFactory to be a class (constructor), not a plain object
     class NodeCanvasFactory {
