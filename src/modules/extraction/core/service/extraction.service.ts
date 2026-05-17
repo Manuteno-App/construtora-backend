@@ -132,7 +132,7 @@ JSON esperado:
     const prompt = `Você é um extrator especialista em Atestados de Capacidade Técnica (CAT) de obras de construção civil brasileiras.
 
 Analise o texto abaixo e extraia TODOS os itens da tabela de serviços executados.
-Retorne SOMENTE um array JSON, sem explicações adicionais.
+Retorne um objeto JSON com a chave "servicos" contendo um array de itens.
 
 INSTRUÇÕES:
 - "categoria": nome da categoria/seção à qual o item pertence (ex: "TERRAPLENAGEM", "PAVIMENTAÇÃO", "DRENAGEM")
@@ -146,23 +146,27 @@ INSTRUÇÕES:
 TEXTO:
 ${text}
 
-Array JSON esperado:
-[
-  { "categoria": "string", "codigo": "string ou null", "descricao": "string", "unidade": "string ou null", "quantidade": number ou null }
-]`;
+Formato esperado:
+{ "servicos": [ { "categoria": "string", "codigo": "string ou null", "descricao": "string", "unidade": "string ou null", "quantidade": number ou null } ] }`;
 
     const response = await this.openai.chat.completions.create({
       model: this.extractionModel,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
-      max_tokens: 4000,
+      max_tokens: 16000,
+      response_format: { type: 'json_object' },
     });
 
-    const content = response.choices[0]?.message?.content ?? '[]';
+    const content = response.choices[0]?.message?.content ?? '{"servicos":[]}';
+    const finishReason = response.choices[0]?.finish_reason;
+    if (finishReason === 'length') {
+      this.logger.warn('GPT services extraction was truncated (finish_reason=length) — partial results may be returned');
+    }
+
     try {
-      const parsed = JSON.parse(this.stripJsonFences(content)) as ServicoItem[];
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((s) => s && typeof s.descricao === 'string' && s.descricao.trim());
+      const parsed = JSON.parse(this.stripJsonFences(content)) as { servicos?: ServicoItem[] };
+      const items = Array.isArray(parsed.servicos) ? parsed.servicos : [];
+      return items.filter((s) => s && typeof s.descricao === 'string' && s.descricao.trim());
     } catch {
       this.logger.warn('Failed to parse GPT-4 services JSON response', content);
       return [];
