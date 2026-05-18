@@ -1,12 +1,11 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job, Queue } from 'bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { ExtractionService } from '../core/service/extraction.service';
-import { IDocumentsApi, DOCUMENTS_API } from '../../documents/public-api/interface/documents-api.interface';
+import { Job, Queue } from 'bullmq';
 import { AtestadoStatus } from '../../documents/persistence/entity/atestado.entity';
+import { DOCUMENTS_API, IDocumentsApi } from '../../documents/public-api/interface/documents-api.interface';
 import { EXTRACTION_QUEUE, INDEXING_QUEUE } from '../../infrastructure/queue/queue.module';
 import type { ServicoItem } from '../../ingestion/core/service/table-extractor.service';
+import { ExtractionService } from '../core/service/extraction.service';
 
 export interface ExtractionJobPayload {
   atestadoId: string;

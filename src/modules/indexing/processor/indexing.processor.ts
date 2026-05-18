@@ -1,8 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { Inject, Logger } from '@nestjs/common';
-import { IndexingService } from '../core/service/indexing.service';
 import { INDEXING_QUEUE } from '../../infrastructure/queue/queue.module';
+import { IndexingService } from '../core/service/indexing.service';
 
 export interface IndexingJobPayload {
   atestadoId: string;
