@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 // Dynamic imports used to avoid hard dependency at module load time
 type CanvasLib = typeof import('canvas');
 type PdfjsLib = typeof import('pdfjs-dist');
+type TesseractModule = typeof import('tesseract.js');
 
 export interface TextractCell {
   rowIndex: number;
@@ -54,6 +55,7 @@ export class VisionService implements OnModuleInit {
 
   private canvasLib: CanvasLib | null = null;
   private pdfjsLib: PdfjsLib | null = null;
+  private tesseractLib: TesseractModule | null = null;
 
   constructor(private readonly config: ConfigService) {
     this.openai = new OpenAI({ apiKey: config.get<string>('openaiApiKey') });
@@ -77,6 +79,19 @@ export class VisionService implements OnModuleInit {
         'VisionService disabled: pdfjs-dist or canvas could not be loaded. ' +
           'Run `npm install pdfjs-dist canvas` to enable Vision fallback.',
         err,
+      );
+    }
+
+    // tesseract.js is optional — enables cheaper Tesseract+GPT-mini OCR path
+    try {
+      this.tesseractLib = (await new Function(
+        'return import("tesseract.js")',
+      )()) as TesseractModule;
+      this.logger.log('VisionService: tesseract.js loaded — Tesseract OCR enabled');
+    } catch {
+      this.logger.warn(
+        'tesseract.js not available — GPT-4o Vision will be used for OCR. ' +
+          'Run `npm install tesseract.js` to enable cheaper Tesseract-based OCR.',
       );
     }
   }
@@ -108,7 +123,17 @@ export class VisionService implements OnModuleInit {
       const pageImages = await this.renderPdfPages(buffer);
       if (pageImages.length === 0) return empty;
 
-      const visionText = await this.callVisionApi(pageImages);
+      let visionText: string;
+      if (this.tesseractLib) {
+        try {
+          visionText = await this.recognizeAndStructure(pageImages);
+        } catch (err) {
+          this.logger.warn('Tesseract OCR failed, falling back to GPT-4o Vision', err);
+          visionText = await this.callVisionApi(pageImages);
+        }
+      } else {
+        visionText = await this.callVisionApi(pageImages);
+      }
 
       // Extract structured blocks before splitting into pages
       const keyValuePairs = this.parseHeaderBlock(visionText);
@@ -294,6 +319,89 @@ export class VisionService implements OnModuleInit {
       return '';
     }
     return content;
+  }
+
+  // ─── Tesseract + GPT-mini path ───────────────────────────────────────────────
+
+  /**
+   * Recognizes text with Tesseract OCR (local, free) then uses GPT-4o-mini
+   * to extract a structured header JSON + service CSV from the raw OCR text.
+   * Significantly cheaper than GPT-4o Vision per page.
+   */
+  private async recognizeAndStructure(pageImages: string[]): Promise<string> {
+    const pageTexts = await this.recognizeWithTesseract(pageImages);
+
+    // Raw transcription with page separators — consumed by splitIntoPages
+    const rawWithSeparators = pageTexts
+      .map((t, i) => `${t.trim()}\n---PAGE ${i + 1} END---`)
+      .join('\n\n');
+
+    // GPT-mini extracts structured blocks from the OCR text
+    const structured = await this.structureWithGpt(
+      pageTexts.map((t, i) => `[Página ${i + 1}]\n${t.trim()}`).join('\n\n'),
+    );
+
+    // Combine: structured blocks first, then raw OCR — downstream parsers consume both
+    return `${structured}\n\n${rawWithSeparators}`;
+  }
+
+  private async recognizeWithTesseract(pageImages: string[]): Promise<string[]> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const langPath = (require('path') as typeof import('path')).resolve(process.cwd());
+
+    const worker = await this.tesseractLib!.createWorker('por', 1, {
+      langPath,
+      logger: (m: { status: string; progress: number }) => {
+        if (m.status === 'recognizing text') {
+          this.logger.verbose(`Tesseract: ${Math.round(m.progress * 100)}%`);
+        }
+      },
+    });
+
+    const texts: string[] = [];
+    for (let i = 0; i < pageImages.length; i++) {
+      const imgBuffer = Buffer.from(pageImages[i], 'base64');
+      const { data: { text } } = await worker.recognize(imgBuffer);
+      texts.push(text);
+      this.logger.debug(
+        `Tesseract page ${i + 1}/${pageImages.length}: ${text.trim().length} chars`,
+      );
+    }
+
+    await worker.terminate();
+    return texts;
+  }
+
+  private async structureWithGpt(rawText: string): Promise<string> {
+    const model = this.config.get<string>('chatModel') ?? 'gpt-4o-mini';
+    const response = await this.openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Você é especialista em leitura de Atestados de Capacidade Técnica (CAT) de obras de construção civil brasileiras.\n' +
+            'Com base no texto OCR fornecido, produza DUAS seções na sua resposta:\n\n' +
+            '1. Bloco de cabeçalho JSON entre os marcadores ===HEADER_JSON_START=== e ===HEADER_JSON_END===\n' +
+            '   Formato: { "obra": "...", "contratante": "...", "contratada": "...", "cnpj": "...", "contrato": "...", ' +
+            '"cidade": "...", "estado": "UF", "valor_obra": "...", "valor_atestado": "...", ' +
+            '"data_atestado": "DD/MM/AAAA", "data_inicio": "DD/MM/AAAA", "data_fim": "DD/MM/AAAA", "engenheiro": "..." }\n\n' +
+            '2. Tabela de serviços como CSV entre ===TABLE_CSV_START=== e ===TABLE_CSV_END===\n' +
+            '   Cabeçalho obrigatório: codigo,descricao,unidade,quantidade,categoria\n' +
+            '   - Linhas de categoria/seção (sem quantidade): deixe unidade e quantidade em branco\n' +
+            '   - Quantidade vazia ou "-": deixe em branco\n' +
+            '   - Preserve números decimais com vírgula (ex: 1.234,56)\n' +
+            '   - Não use aspas desnecessárias. Use aspas duplas apenas se o campo contiver vírgula\n\n' +
+            'Se algum campo não estiver presente no texto, omita-o do JSON (não inclua null ou string vazia).',
+        },
+        {
+          role: 'user',
+          content: `Texto OCR extraído do atestado:\n\n${rawText}`,
+        },
+      ],
+      max_tokens: 4096,
+    });
+    return response.choices[0]?.message?.content ?? '';
   }
 
   private parseHeaderBlock(text: string): Record<string, string> {
