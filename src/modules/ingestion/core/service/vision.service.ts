@@ -124,14 +124,10 @@ export class VisionService implements OnModuleInit {
       if (pageImages.length === 0) return empty;
 
       let visionText: string;
-      if (this.tesseractLib) {
-        try {
-          visionText = await this.recognizeAndStructure(pageImages);
-        } catch (err) {
-          this.logger.warn('Tesseract OCR failed, falling back to GPT-4o Vision', err);
-          visionText = await this.callVisionApi(pageImages);
-        }
-      } else {
+      try {
+        visionText = await this.recognizeAndStructure(pageImages);
+      } catch (err) {
+        this.logger.warn('Per-page Vision failed, falling back to single-call GPT-4o Vision', err);
         visionText = await this.callVisionApi(pageImages);
       }
 
@@ -321,58 +317,28 @@ export class VisionService implements OnModuleInit {
     return content;
   }
 
-  // ─── Tesseract + GPT-mini path ───────────────────────────────────────────────
+  // ─── Per-page Vision path ────────────────────────────────────────────────────
 
   /**
-   * Recognizes text with Tesseract OCR (local, free) then uses GPT-4o-mini
-   * to extract a structured header JSON + service CSV from the raw OCR text.
-   * Significantly cheaper than GPT-4o Vision per page.
+   * Processes each PDF page individually with GPT-4o-mini Vision.
+   * Per-page calls prevent token overflow and let the model understand
+   * visual table structure (multi-line descriptions, column alignment).
+   * Results are merged into the combined visionText expected by downstream parsers.
    */
   private async recognizeAndStructure(pageImages: string[]): Promise<string> {
-    const pageTexts = await this.recognizeWithTesseract(pageImages);
-
-    // Raw transcription with page separators — consumed by splitIntoPages
-    const rawWithSeparators = pageTexts
-      .map((t, i) => `${t.trim()}\n---PAGE ${i + 1} END---`)
-      .join('\n\n');
-
-    // GPT-mini extracts structured blocks from the OCR text
-    const structured = await this.structureWithGpt(
-      pageTexts.map((t, i) => `[Página ${i + 1}]\n${t.trim()}`).join('\n\n'),
-    );
-
-    // Combine: structured blocks first, then raw OCR — downstream parsers consume both
-    return `${structured}\n\n${rawWithSeparators}`;
-  }
-
-  private async recognizeWithTesseract(pageImages: string[]): Promise<string[]> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const langPath = (require('path') as typeof import('path')).resolve(process.cwd());
-
-    const worker = await this.tesseractLib!.createWorker('por', 1, {
-      langPath,
-      logger: (m: { status: string; progress: number }) => {
-        if (m.status === 'recognizing text') {
-          this.logger.verbose(`Tesseract: ${Math.round(m.progress * 100)}%`);
-        }
-      },
-    });
-
-    const texts: string[] = [];
+    const pageTexts: string[] = [];
     for (let i = 0; i < pageImages.length; i++) {
-      const imgBuffer = Buffer.from(pageImages[i], 'base64');
-      const { data: { text } } = await worker.recognize(imgBuffer);
-      texts.push(text);
-      this.logger.debug(
-        `Tesseract page ${i + 1}/${pageImages.length}: ${text.trim().length} chars`,
-      );
+      const text = await this.callSinglePageVision(pageImages[i], i + 1);
+      pageTexts.push(text);
+      this.logger.debug(`Vision page ${i + 1}/${pageImages.length}: ${text.length} chars`);
     }
-
-    await worker.terminate();
-    return texts;
+    return this.mergePageVisionResults(pageTexts);
   }
 
-  private async structureWithGpt(rawText: string): Promise<string> {
+  private async callSinglePageVision(
+    base64Image: string,
+    pageNum: number,
+  ): Promise<string> {
     const model = this.config.get<string>('chatModel') ?? 'gpt-4o-mini';
     const response = await this.openai.chat.completions.create({
       model,
@@ -381,27 +347,89 @@ export class VisionService implements OnModuleInit {
           role: 'system',
           content:
             'Você é especialista em leitura de Atestados de Capacidade Técnica (CAT) de obras de construção civil brasileiras.\n' +
-            'Com base no texto OCR fornecido, produza DUAS seções na sua resposta:\n\n' +
+            'Ao processar a página, produza TRÊS seções:\n\n' +
             '1. Bloco de cabeçalho JSON entre os marcadores ===HEADER_JSON_START=== e ===HEADER_JSON_END===\n' +
             '   Formato: { "obra": "...", "contratante": "...", "contratada": "...", "cnpj": "...", "contrato": "...", ' +
             '"cidade": "...", "estado": "UF", "valor_obra": "...", "valor_atestado": "...", ' +
-            '"data_atestado": "DD/MM/AAAA", "data_inicio": "DD/MM/AAAA", "data_fim": "DD/MM/AAAA", "engenheiro": "..." }\n\n' +
+            '"data_atestado": "DD/MM/AAAA", "data_inicio": "DD/MM/AAAA", "data_fim": "DD/MM/AAAA", "engenheiro": "..." }\n' +
+            '   Se nenhum campo estiver nesta página, emita: ===HEADER_JSON_START==={}===HEADER_JSON_END===\n\n' +
             '2. Tabela de serviços como CSV entre ===TABLE_CSV_START=== e ===TABLE_CSV_END===\n' +
             '   Cabeçalho obrigatório: codigo,descricao,unidade,quantidade,categoria\n' +
-            '   - Linhas de categoria/seção (sem quantidade): deixe unidade e quantidade em branco\n' +
+            '   - IMPORTANTE: junte em um único campo CSV toda descrição que ocupe múltiplas linhas na tabela\n' +
+            '   - Linhas de categoria/seção (sem código e sem quantidade): deixe codigo, unidade e quantidade em branco\n' +
             '   - Quantidade vazia ou "-": deixe em branco\n' +
-            '   - Preserve números decimais com vírgula (ex: 1.234,56)\n' +
-            '   - Não use aspas desnecessárias. Use aspas duplas apenas se o campo contiver vírgula\n\n' +
-            'Se algum campo não estiver presente no texto, omita-o do JSON (não inclua null ou string vazia).',
+            '   - Preserve números decimais exatamente como aparecem (ex: 1.234,560)\n' +
+            '   - Não use aspas desnecessárias; use aspas duplas apenas se o campo contiver vírgula\n' +
+            '   - Se não houver tabela nesta página, emita apenas o cabeçalho: codigo,descricao,unidade,quantidade,categoria\n\n' +
+            '3. Transcrição fiel do texto restante (excluindo os blocos acima), terminando com "---PAGE N END---" onde N é o número da página.',
         },
         {
           role: 'user',
-          content: `Texto OCR extraído do atestado:\n\n${rawText}`,
+          content: [
+            { type: 'text' as const, text: `Página ${pageNum} do documento:` },
+            {
+              type: 'image_url' as const,
+              image_url: {
+                url: `data:image/png;base64,${base64Image}`,
+                detail: 'high' as const,
+              },
+            },
+          ],
         },
       ],
-      max_tokens: 4096,
+      max_tokens: 8192,
     });
-    return response.choices[0]?.message?.content ?? '';
+
+    const content = response.choices[0]?.message?.content ?? '';
+    if (this.isRefusal(content)) {
+      this.logger.warn(`GPT Vision refused page ${pageNum} — skipping`);
+      return `---PAGE ${pageNum} END---`;
+    }
+    return content;
+  }
+
+  private mergePageVisionResults(pageTexts: string[]): string {
+    let mergedHeaderJson = '';
+    const allTableRows: string[] = [];
+    const allTranscriptions: string[] = [];
+
+    for (const text of pageTexts) {
+      // Header: take the first non-empty one across all pages
+      if (!mergedHeaderJson) {
+        const m = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
+        if (m && m[1].trim() !== '{}' && m[1].trim() !== '') {
+          mergedHeaderJson = m[1].trim();
+        }
+      }
+
+      // Table: merge rows from all pages; skip duplicate header lines
+      const tableMatch = /===TABLE_CSV_START===\s*([\s\S]*?)\s*===TABLE_CSV_END===/i.exec(text);
+      if (tableMatch) {
+        const lines = tableMatch[1].split('\n').map((l) => l.trim()).filter(Boolean);
+        for (const line of lines) {
+          if (line.toLowerCase().startsWith('codigo,') && allTableRows.length > 0) continue;
+          allTableRows.push(line);
+        }
+      }
+
+      // Transcription: strip structured blocks, keep the rest
+      const stripped = text
+        .replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '')
+        .replace(/===TABLE_CSV_START===[\s\S]*?===TABLE_CSV_END===/gi, '')
+        .trim();
+      if (stripped) allTranscriptions.push(stripped);
+    }
+
+    const headerBlock = mergedHeaderJson
+      ? `===HEADER_JSON_START===\n${mergedHeaderJson}\n===HEADER_JSON_END===`
+      : '';
+    const tableBlock =
+      allTableRows.length > 0
+        ? `===TABLE_CSV_START===\n${allTableRows.join('\n')}\n===TABLE_CSV_END===`
+        : '';
+    const transcription = allTranscriptions.join('\n\n');
+
+    return [headerBlock, tableBlock, transcription].filter(Boolean).join('\n\n');
   }
 
   private parseHeaderBlock(text: string): Record<string, string> {
