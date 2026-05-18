@@ -15,7 +15,7 @@ export interface ExtractionJobPayload {
   keyValuePairs?: Record<string, string>;
 }
 
-@Processor(EXTRACTION_QUEUE)
+@Processor(EXTRACTION_QUEUE, { lockDuration: 600_000 }) // 10-minute lock for LLM extraction
 export class ExtractionProcessor extends WorkerHost {
   private readonly logger = new Logger(ExtractionProcessor.name);
 

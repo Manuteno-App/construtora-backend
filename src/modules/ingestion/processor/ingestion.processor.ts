@@ -33,7 +33,10 @@ export interface IngestionJobPayload {
   atestadoId: string;
 }
 
-@Processor(INGESTION_QUEUE)
+// 30-minute lock: Vision OCR on large PDFs (100+ pages × per-page GPT calls) can
+// take 10-20 min. Without a long lockDuration BullMQ marks the job as stalled and
+// requeues it before it finishes, causing duplicate processing.
+@Processor(INGESTION_QUEUE, { lockDuration: 1_800_000 })
 export class IngestionProcessor extends WorkerHost {
   private readonly logger = new Logger(IngestionProcessor.name);
 

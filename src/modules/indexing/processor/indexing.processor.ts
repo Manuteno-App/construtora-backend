@@ -9,7 +9,7 @@ export interface IndexingJobPayload {
   chunkIds: string[];
 }
 
-@Processor(INDEXING_QUEUE)
+@Processor(INDEXING_QUEUE, { lockDuration: 600_000 }) // 10-minute lock for embedding indexing
 export class IndexingProcessor extends WorkerHost {
   private readonly logger = new Logger(IndexingProcessor.name);
 
