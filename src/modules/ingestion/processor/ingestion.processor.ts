@@ -14,6 +14,9 @@ const pdfParse = require('pdf-parse');
 
 const TARGET_CHUNK_TOKENS = 800;
 const CHUNK_OVERLAP_TOKENS = 75;
+/** Minimum characters for a page to be considered adequately extracted by pdf-parse.
+ *  Pages below this threshold are treated as sparse (likely scanned) and sent to Vision OCR. */
+const SPARSE_PAGE_THRESHOLD = 300;
 
 /** Regex patterns to extract header key-value hints from raw PDF text. */
 const HEADER_PATTERNS: Array<[string, RegExp]> = [
@@ -73,24 +76,29 @@ export class IngestionProcessor extends WorkerHost {
         fullText = (parsed.text as string).trim();
         const rawPages = (parsed.text as string).split('\f');
         pages = rawPages.map((t, i) => ({ pageNumber: i + 1, text: t }));
-        const sparsePages = pages.filter((p) => p.text.trim().length < 100).length;
+        const sparsePages = pages.filter((p) => p.text.trim().length < SPARSE_PAGE_THRESHOLD).length;
         this.logger.log(
-          `pdf-parse: ${pages.length} pages, ${fullText.length} chars, ${sparsePages} sparse pages for ${atestadoId}`,
+          `pdf-parse: ${pages.length} pages, ${fullText.length} chars, ${sparsePages} sparse pages (< ${SPARSE_PAGE_THRESHOLD} chars) for ${atestadoId}`,
         );
       } catch {
         this.logger.warn(`pdf-parse failed for ${atestadoId}, falling back to OCR`);
       }
 
-      const sparseRatio = pages.length > 0
-        ? pages.filter((p) => p.text.trim().length < 100).length / pages.length
-        : 1;
-      const needsOcr = !fullText || fullText.length < 100 || (pages.length > 1 && sparseRatio > 0.3);
+      const sparsePageNums = pages
+        .filter((p) => p.text.trim().length < SPARSE_PAGE_THRESHOLD)
+        .map((p) => p.pageNumber);
+      const sparseRatio = pages.length > 0 ? sparsePageNums.length / pages.length : 1;
+      // Full OCR: no text at all, OR every page is sparse
+      const noText = !fullText || fullText.length < 100;
+      const allSparse = noText || sparsePageNums.length === pages.length;
+      // Hybrid OCR: at least one page is sparse but not all (mixed digital + scanned)
+      const hasSparsePages = !allSparse && sparsePageNums.length > 0;
 
       let keyValuePairs: Record<string, string> = {};
 
-      if (needsOcr) {
+      if (allSparse) {
         this.logger.log(
-          `Using Vision OCR for ${atestadoId} (fullText=${fullText.length} chars, sparseRatio=${sparseRatio.toFixed(2)})`,
+          `Using Vision OCR (full) for ${atestadoId} (fullText=${fullText.length} chars, sparseRatio=${sparseRatio.toFixed(2)})`,
         );
         const ocrResult = await this.vision.analyze(buffer);
         fullText = ocrResult.text;
@@ -117,7 +125,55 @@ export class IngestionProcessor extends WorkerHost {
           keyValuePairs,
         });
         this.logger.log(
-          `Ingestion done for ${atestadoId}: ${savedChunks.length} chunks, ${tabelaServicos.length} servicos (Vision)`,
+          `Ingestion done for ${atestadoId}: ${savedChunks.length} chunks, ${tabelaServicos.length} servicos (Vision full)`,
+        );
+        return;
+      }
+
+      if (hasSparsePages) {
+        this.logger.log(
+          `Using Vision OCR (hybrid: ${sparsePageNums.length}/${pages.length} pages) for ${atestadoId}`,
+        );
+        const ocrResult = await this.vision.analyzeSelectivePages(buffer, sparsePageNums);
+
+        // Merge: replace sparse pages' text with Vision OCR results; keep digital pages' pdf-parse text
+        const ocrPageMap = new Map(ocrResult.pages.map((p) => [p.pageNumber, p.text]));
+        const mergedPages = pages.map((p) => ({
+          pageNumber: p.pageNumber,
+          text: ocrPageMap.has(p.pageNumber) ? (ocrPageMap.get(p.pageNumber) ?? '') : p.text,
+        }));
+        const mergedFullText = mergedPages.map((p) => p.text).join('\n\n');
+
+        keyValuePairs =
+          Object.keys(ocrResult.keyValuePairs).length > 0
+            ? ocrResult.keyValuePairs
+            : this.extractHeaderHints(mergedFullText);
+
+        const tabelaServicos =
+          ocrResult.rawServiceRows?.length
+            ? this.tableExtractor.extractBest(ocrResult)
+            : this.tableExtractor.extract(mergedFullText);
+
+        const processedText = this.preProcess(mergedFullText);
+        const chunks = this.buildChunks(processedText, mergedPages, atestado.originalFilename, keyValuePairs);
+        const savedChunks = await this.chunkRepo.saveMany(
+          chunks.map((c, i): CreateChunkData => ({
+            atestadoId,
+            originalFilename: atestado.originalFilename,
+            content: c.content,
+            chunkIndex: i,
+            pageNumber: c.pageNumber,
+          })),
+        );
+
+        await this.extractionQueue.add('extract-entities', {
+          atestadoId,
+          chunkIds: savedChunks.map((c) => c.id),
+          tabelaServicos,
+          keyValuePairs,
+        });
+        this.logger.log(
+          `Ingestion done for ${atestadoId}: ${savedChunks.length} chunks, ${tabelaServicos.length} servicos (Vision hybrid)`,
         );
         return;
       }

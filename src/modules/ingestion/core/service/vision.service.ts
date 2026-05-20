@@ -151,9 +151,69 @@ export class VisionService implements OnModuleInit {
     }
   }
 
+  /**
+   * Analyses only the specified pages of a PDF with GPT-4o Vision and returns an OcrResult.
+   * Used for hybrid OCR on mixed documents: digital pages keep their pdf-parse text while
+   * scanned pages (identified by low character count) are sent through Vision.
+   */
+  async analyzeSelectivePages(buffer: Buffer, pageNumbers: number[]): Promise<OcrResult> {
+    const empty: OcrResult = {
+      text: '',
+      pages: [],
+      tables: [],
+      keyValuePairs: {},
+      avgConfidence: 0,
+    };
+
+    if (!this.isAvailable() || pageNumbers.length === 0) return empty;
+
+    try {
+      const pageEntries = await this.renderPagesFiltered(buffer, new Set(pageNumbers));
+      if (pageEntries.length === 0) return empty;
+
+      const pageTexts: string[] = [];
+      for (const { pageNumber, base64 } of pageEntries) {
+        const text = await this.callSinglePageVision(base64, pageNumber);
+        pageTexts.push(text);
+        this.logger.debug(`Selective Vision page ${pageNumber}: ${text.length} chars`);
+      }
+
+      const visionText = this.mergePageVisionResults(pageTexts);
+      const keyValuePairs = this.parseHeaderBlock(visionText);
+      const rawServiceRows = this.parseTableBlock(visionText);
+      const cleanText = this.removeStructuredBlocks(visionText);
+      const pages = this.splitIntoPages(cleanText);
+
+      return {
+        text: pages.map((p) => p.text).join('\n\n'),
+        pages,
+        tables: [],
+        keyValuePairs,
+        avgConfidence: 100,
+        rawServiceRows,
+      };
+    } catch (err) {
+      this.logger.error('Selective Vision analysis failed', err);
+      return empty;
+    }
+  }
+
   // ─── Private helpers ────────────────────────────────────────────────────────
 
   private async renderPdfPages(buffer: Buffer): Promise<string[]> {
+    const entries = await this.renderPagesFiltered(buffer);
+    return entries.map((e) => e.base64);
+  }
+
+  /**
+   * Renders PDF pages to base64 PNG images.
+   * When `pageFilter` is provided, only the specified page numbers are rendered.
+   * Returns an array of { pageNumber, base64 } entries in document order.
+   */
+  private async renderPagesFiltered(
+    buffer: Buffer,
+    pageFilter?: Set<number>,
+  ): Promise<Array<{ pageNumber: number; base64: string }>> {
     const { createCanvas } = this.canvasLib!;
     const pdfjsLib = this.pdfjsLib!;
 
@@ -196,9 +256,11 @@ export class VisionService implements OnModuleInit {
       })
       .promise;
 
-    const images: string[] = [];
+    const result: Array<{ pageNumber: number; base64: string }> = [];
 
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+      if (pageFilter && !pageFilter.has(pageNum)) continue;
+
       const page = await pdfDoc.getPage(pageNum);
       // scale 2.0 → ~150 dpi, good balance of quality vs token cost
       const viewport = page.getViewport({ scale: 2.0 });
@@ -215,12 +277,12 @@ export class VisionService implements OnModuleInit {
         viewport,
       }).promise;
 
-      images.push(canvas.toBuffer('image/png').toString('base64'));
+      result.push({ pageNumber: pageNum, base64: canvas.toBuffer('image/png').toString('base64') });
       page.cleanup();
     }
 
     await pdfDoc.destroy();
-    return images;
+    return result;
   }
 
   private async callVisionApi(pageImages: string[]): Promise<string> {
