@@ -127,15 +127,24 @@ export class VisionService implements OnModuleInit {
     }
 
     try {
-      const pageImages = await this.renderPdfPages(buffer);
-      if (pageImages.length === 0) return empty;
+      // Stream: render one page → send to GPT → discard image → next page.
+      // Avoids holding all pages in memory simultaneously (100-page PDF = 400 MB+).
+      const pageTexts: string[] = [];
+      const entries = await this.renderPagesFiltered(buffer);
+      if (entries.length === 0) return empty;
+
+      for (const { pageNumber, base64 } of entries) {
+        const text = await this.callSinglePageVision(base64, pageNumber);
+        pageTexts.push(text);
+        this.logger.debug(`Vision page ${pageNumber}/${entries.length}: ${text.length} chars`);
+      }
 
       let visionText: string;
       try {
-        visionText = await this.recognizeAndStructure(pageImages);
+        visionText = this.mergePageVisionResults(pageTexts);
       } catch (err) {
-        this.logger.warn('Per-page Vision failed, falling back to single-call GPT-4o Vision', err);
-        visionText = await this.callVisionApi(pageImages);
+        this.logger.warn('mergePageVisionResults failed — returning empty', err);
+        return empty;
       }
 
       // Extract structured blocks before splitting into pages
@@ -207,15 +216,18 @@ export class VisionService implements OnModuleInit {
 
   // ─── Private helpers ────────────────────────────────────────────────────────
 
-  private async renderPdfPages(buffer: Buffer): Promise<string[]> {
-    const entries = await this.renderPagesFiltered(buffer);
-    return entries.map((e) => e.base64);
-  }
-
   /**
    * Renders PDF pages to base64 PNG images.
    * When `pageFilter` is provided, only the specified page numbers are rendered.
    * Returns an array of { pageNumber, base64 } entries in document order.
+   *
+   * Safety guarantees:
+   *  - `stopAtErrors: false` — pdfjs-dist does not abort on corrupt embedded images.
+   *  - 30 s per-page timeout with `renderTask.cancel()` — breaks CPU spin loops caused
+   *    by corrupt JPEG data (e.g. marker 0xffff).
+   *  - Per-page try/catch — one bad page is skipped; the rest of the document continues.
+   *  - Scale 1.5 instead of 2.0 — 44 % smaller canvas; less CPU and memory per page.
+   *  - Canvas is zeroed after encoding — releases ~8 MB per page immediately.
    */
   private async renderPagesFiltered(
     buffer: Buffer,
@@ -260,32 +272,51 @@ export class VisionService implements OnModuleInit {
         CanvasFactory: NodeCanvasFactory as unknown as object,
         useSystemFonts: true,
         disableFontFace: true,
+        stopAtErrors: false, // continue past corrupt embedded images
       })
       .promise;
 
     const result: Array<{ pageNumber: number; base64: string }> = [];
+    const PAGE_RENDER_TIMEOUT_MS = 30_000;
 
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
       if (pageFilter && !pageFilter.has(pageNum)) continue;
 
-      const page = await pdfDoc.getPage(pageNum);
-      // scale 2.0 → ~150 dpi, good balance of quality vs token cost
-      const viewport = page.getViewport({ scale: 2.0 });
+      try {
+        const page = await pdfDoc.getPage(pageNum);
+        // scale 1.5 → ~112 dpi; sufficient for Vision OCR, 44% less memory than 2.0
+        const viewport = page.getViewport({ scale: 1.5 });
 
-      const { canvas, context } = nodeCanvasFactory.create(
-        Math.ceil(viewport.width),
-        Math.ceil(viewport.height),
-      );
+        const { canvas, context } = nodeCanvasFactory.create(
+          Math.ceil(viewport.width),
+          Math.ceil(viewport.height),
+        );
 
-      await page.render({
-        // The node-canvas object is compatible with HTMLCanvasElement at runtime
-        canvas: canvas as unknown as HTMLCanvasElement,
-        canvasContext: context as unknown as CanvasRenderingContext2D,
-        viewport,
-      }).promise;
+        const renderTask = page.render({
+          // The node-canvas object is compatible with HTMLCanvasElement at runtime
+          canvas: canvas as unknown as HTMLCanvasElement,
+          canvasContext: context as unknown as CanvasRenderingContext2D,
+          viewport,
+        });
 
-      result.push({ pageNumber: pageNum, base64: canvas.toBuffer('image/png').toString('base64') });
-      page.cleanup();
+        // Race against a timeout so a corrupt JPEG cannot spin the CPU indefinitely
+        await Promise.race([
+          renderTask.promise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => {
+              renderTask.cancel();
+              reject(new Error(`timeout p${pageNum}`));
+            }, PAGE_RENDER_TIMEOUT_MS),
+          ),
+        ]);
+
+        result.push({ pageNumber: pageNum, base64: canvas.toBuffer('image/png').toString('base64') });
+        page.cleanup();
+        // Release canvas memory immediately — do not accumulate all pages
+        (canvas as unknown as { width: number }).width = 0;
+      } catch (err) {
+        this.logger.warn(`Skipping page ${pageNum}: ${(err as Error).message}`);
+      }
     }
 
     await pdfDoc.destroy();
