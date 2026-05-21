@@ -8,6 +8,7 @@ export interface ListAtestadosParams {
   status?: AtestadoStatus;
   page: number;
   limit: number;
+  sortBy?: 'createdAt' | 'lastReprocessedAt';
 }
 
 @Injectable()
@@ -38,6 +39,7 @@ export class DocumentService {
       params.status,
       params.page,
       params.limit,
+      params.sortBy,
     );
     return { items, total };
   }

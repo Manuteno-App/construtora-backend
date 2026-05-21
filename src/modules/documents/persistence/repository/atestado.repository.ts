@@ -31,11 +31,17 @@ export class AtestadoRepository extends DefaultTypeOrmRepository<Atestado> {
     status: AtestadoStatus | undefined,
     page: number,
     limit: number,
+    sortBy: 'createdAt' | 'lastReprocessedAt' = 'createdAt',
   ): Promise<[Atestado[], number]> {
     const qb = this.createQueryBuilder('a')
-      .orderBy('a.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
+
+    if (sortBy === 'lastReprocessedAt') {
+      qb.orderBy('a.lastReprocessedAt', 'DESC', 'NULLS LAST');
+    } else {
+      qb.orderBy('a.createdAt', 'DESC');
+    }
 
     if (status) {
       qb.where('a.status = :status', { status });
