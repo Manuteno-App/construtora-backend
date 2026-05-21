@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
+import { isValidCategoryHeader } from './table-extractor.service';
 
 // Dynamic imports used to avoid hard dependency at module load time
 type CanvasLib = typeof import('canvas');
@@ -316,7 +317,8 @@ export class VisionService implements OnModuleInit {
             '"data_atestado": "DD/MM/AAAA", "data_inicio": "DD/MM/AAAA", "data_fim": "DD/MM/AAAA", "engenheiro": "..." }\n\n' +
             '2. Tabela de serviços como CSV entre ===TABLE_CSV_START=== e ===TABLE_CSV_END===\n' +
             '   Cabeçalho obrigatório: codigo,descricao,unidade,quantidade,categoria\n' +
-            '   - Linhas de categoria/seção (sem quantidade): deixe unidade e quantidade em branco\n' +
+            '   - Linhas de categoria/seção (sem quantidade): coloque o nome da categoria em descricao e deixe codigo, unidade e quantidade em branco\n' +
+            '   - NÃO inclua linhas de TOTAL, SUBTOTAL, SOMA ou resumo no CSV; omita-as completamente\n' +
             '   - Quantidade vazia ou "-": deixe em branco\n' +
             '   - Preserve números decimais com vírgula (ex: 1.234,56)\n' +
             '   - Não use aspas desnecessárias. Use aspas duplas apenas se o campo contiver vírgula\n\n' +
@@ -418,7 +420,8 @@ export class VisionService implements OnModuleInit {
             '2. Tabela de serviços como CSV entre ===TABLE_CSV_START=== e ===TABLE_CSV_END===\n' +
             '   Cabeçalho obrigatório: codigo,descricao,unidade,quantidade,categoria\n' +
             '   - IMPORTANTE: junte em um único campo CSV toda descrição que ocupe múltiplas linhas na tabela\n' +
-            '   - Linhas de categoria/seção (sem código e sem quantidade): deixe codigo, unidade e quantidade em branco\n' +
+            '   - Linhas de categoria/seção (sem código e sem quantidade): coloque o nome da categoria em descricao e deixe codigo, unidade e quantidade em branco\n' +
+            '   - NÃO inclua linhas de TOTAL, SUBTOTAL, SOMA ou resumo no CSV; omita-as completamente\n' +
             '   - Quantidade vazia ou "-": deixe em branco\n' +
             '   - Preserve números decimais exatamente como aparecem (ex: 1.234,560)\n' +
             '   - Não use aspas desnecessárias; use aspas duplas apenas se o campo contiver vírgula\n' +
@@ -542,7 +545,7 @@ export class VisionService implements OnModuleInit {
 
       // Row without quantity → category/subcategory
       if (!quantidade || quantidade === '-') {
-        currentCategory = descricao;
+        if (isValidCategoryHeader(descricao)) currentCategory = descricao;
         continue;
       }
 

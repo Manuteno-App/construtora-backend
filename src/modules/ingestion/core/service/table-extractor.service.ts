@@ -13,6 +13,19 @@ export interface ServicoItem {
 // All-uppercase header pattern (e.g. TERRAPLENAGEM, SERVIÇOS PRELIMINARES)
 const CATEGORY_HEADER_RE = /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÜ\s\\/(),.-]{5,}$/;
 
+// Patterns that should NOT become category names: totals, subtotals, soma, and pure
+// section codes (e.g. "01", "01.01", "E-01") that carry no descriptive text.
+const INVALID_CATEGORY_RE =
+  /^(sub)?total\b|^soma\b|^\s*[A-Z]{0,3}[-.]?\d+([.\-]\d+)*\s*$/i;
+
+/**
+ * Returns true when `text` looks like a genuine category/section header
+ * and should update `currentCategory`.
+ */
+export function isValidCategoryHeader(text: string): boolean {
+  return !!text && text.length >= 3 && !INVALID_CATEGORY_RE.test(text);
+}
+
 // Legacy regex for raw text fallback — more flexible spacing
 const TABLE_ROW_RE =
   /^\s*([A-Z0-9][\w./\-]{0,19})\s{2,}(.{5,80?}?)\s{2,}(m[²³]?|km|un|cj|vb|ton|l\b|m\b|m2|m3|ha|gl|sg|mês|mes|hr|h\b|pç|pc)\s{1,}([\d.,]+)\s*$/i;
@@ -108,7 +121,7 @@ export class TableExtractorService {
         // Category/subcategory: has a description but no valid quantity.
         // Handles both all-caps headers AND hierarchical code rows (01, 01.01)
         if (!hasQuantity) {
-          if (descText) currentCategory = descText;
+          if (descText && isValidCategoryHeader(descText)) currentCategory = descText;
           continue;
         }
 
@@ -144,7 +157,7 @@ export class TableExtractorService {
       const line = raw.trim();
       if (!line) continue;
 
-      if (CATEGORY_HEADER_RE.test(line) && line.length > 4) {
+      if (CATEGORY_HEADER_RE.test(line) && line.length > 4 && isValidCategoryHeader(line)) {
         currentCategory = line;
         currentTrecho = undefined;
         continue;
