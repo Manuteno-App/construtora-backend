@@ -6,7 +6,8 @@ import { DOCUMENTS_API, IDocumentsApi } from '../../documents/public-api/interfa
 import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../../infrastructure/queue/queue.module';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { TableExtractorService } from '../core/service/table-extractor.service';
-import { VisionService } from '../core/service/vision.service';
+import { ServicoItem } from '../core/service/table-extractor.service';
+import { TextractService, VisionService } from '../core/service/vision.service';
 import { ChunkRepository, CreateChunkData } from '../persistence/repository/chunk.repository';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -47,6 +48,7 @@ export class IngestionProcessor extends WorkerHost {
     private readonly storage: StorageService,
     private readonly tableExtractor: TableExtractorService,
     private readonly vision: VisionService,
+    private readonly textract: TextractService,
     private readonly chunkRepo: ChunkRepository,
     @Inject(DOCUMENTS_API) private readonly documentsApi: IDocumentsApi,
     @InjectQueue(EXTRACTION_QUEUE) private readonly extractionQueue: Queue,
@@ -95,6 +97,7 @@ export class IngestionProcessor extends WorkerHost {
       const hasSparsePages = !allSparse && sparsePageNums.length > 0;
 
       let keyValuePairs: Record<string, string> = {};
+      let tabelaServicos: ServicoItem[] = [];
 
       if (allSparse) {
         this.logger.log(
@@ -104,83 +107,52 @@ export class IngestionProcessor extends WorkerHost {
         fullText = ocrResult.text;
         pages = ocrResult.pages;
         keyValuePairs = ocrResult.keyValuePairs;
-
-        const tabelaServicos = this.tableExtractor.extractBest(ocrResult);
+        tabelaServicos = this.tableExtractor.extractBest(ocrResult);
         fullText = this.preProcess(fullText);
-        const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
-        const savedChunks = await this.chunkRepo.saveMany(
-          chunks.map((c, i): CreateChunkData => ({
-            atestadoId,
-            originalFilename: atestado.originalFilename,
-            content: c.content,
-            chunkIndex: i,
-            pageNumber: c.pageNumber,
-          })),
-        );
-
-        await this.extractionQueue.add('extract-entities', {
-          atestadoId,
-          chunkIds: savedChunks.map((c) => c.id),
-          tabelaServicos,
-          keyValuePairs,
-        });
-        this.logger.log(
-          `Ingestion done for ${atestadoId}: ${savedChunks.length} chunks, ${tabelaServicos.length} servicos (Vision full)`,
-        );
-        return;
-      }
-
-      if (hasSparsePages) {
+      } else if (hasSparsePages) {
         this.logger.log(
           `Using Vision OCR (hybrid: ${sparsePageNums.length}/${pages.length} pages) for ${atestadoId}`,
         );
         const ocrResult = await this.vision.analyzeSelectivePages(buffer, sparsePageNums);
-
-        // Merge: replace sparse pages' text with Vision OCR results; keep digital pages' pdf-parse text
         const ocrPageMap = new Map(ocrResult.pages.map((p) => [p.pageNumber, p.text]));
         const mergedPages = pages.map((p) => ({
           pageNumber: p.pageNumber,
           text: ocrPageMap.has(p.pageNumber) ? (ocrPageMap.get(p.pageNumber) ?? '') : p.text,
         }));
         const mergedFullText = mergedPages.map((p) => p.text).join('\n\n');
-
+        pages = mergedPages;
         keyValuePairs =
           Object.keys(ocrResult.keyValuePairs).length > 0
             ? ocrResult.keyValuePairs
             : this.extractHeaderHints(mergedFullText);
-
-        const tabelaServicos =
+        tabelaServicos =
           ocrResult.rawServiceRows?.length
             ? this.tableExtractor.extractBest(ocrResult)
             : this.tableExtractor.extract(mergedFullText);
-
-        const processedText = this.preProcess(mergedFullText);
-        const chunks = this.buildChunks(processedText, mergedPages, atestado.originalFilename, keyValuePairs);
-        const savedChunks = await this.chunkRepo.saveMany(
-          chunks.map((c, i): CreateChunkData => ({
-            atestadoId,
-            originalFilename: atestado.originalFilename,
-            content: c.content,
-            chunkIndex: i,
-            pageNumber: c.pageNumber,
-          })),
-        );
-
-        await this.extractionQueue.add('extract-entities', {
-          atestadoId,
-          chunkIds: savedChunks.map((c) => c.id),
-          tabelaServicos,
-          keyValuePairs,
-        });
-        this.logger.log(
-          `Ingestion done for ${atestadoId}: ${savedChunks.length} chunks, ${tabelaServicos.length} servicos (Vision hybrid)`,
-        );
-        return;
+        fullText = this.preProcess(mergedFullText);
+      } else {
+        fullText = this.preProcess(fullText);
+        tabelaServicos = this.tableExtractor.extract(fullText);
+        keyValuePairs = this.extractHeaderHints(fullText);
       }
 
-      fullText = this.preProcess(fullText);
-      const tabelaServicos = this.tableExtractor.extract(fullText);
-      keyValuePairs = this.extractHeaderHints(fullText);
+      // Textract fallback: only when no services found by any previous method
+      if (tabelaServicos.length === 0) {
+        this.logger.log(`No services found via OCR — trying AWS Textract for ${atestadoId}`);
+        try {
+          const textractTables = await this.textract.analyzeTables(atestado.s3Key);
+          if (textractTables.length > 0) {
+            const items = this.tableExtractor.extractFromTables(textractTables);
+            if (items.length > 0) {
+              tabelaServicos = items;
+              this.logger.log(`Textract found ${tabelaServicos.length} services for ${atestadoId}`);
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`Textract fallback failed for ${atestadoId}`, err);
+        }
+      }
+
       const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
       const savedChunks = await this.chunkRepo.saveMany(
         chunks.map((c, i): CreateChunkData => ({

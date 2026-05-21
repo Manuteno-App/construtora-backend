@@ -1,5 +1,11 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  Block,
+  GetDocumentAnalysisCommand,
+  StartDocumentAnalysisCommand,
+  TextractClient,
+} from '@aws-sdk/client-textract';
 import OpenAI from 'openai';
 import { isValidCategoryHeader } from './table-extractor.service';
 
@@ -609,5 +615,114 @@ export class VisionService implements OnModuleInit {
     }
 
     return pages;
+  }
+}
+
+// ─── TextractService ─────────────────────────────────────────────────────────
+// Co-located with TextractTable / TextractCell type definitions.
+
+/**
+ * TextractService — AWS Textract async document analysis.
+ * Last-resort fallback: called only when all Vision OCR paths return zero service rows.
+ * Uses StartDocumentAnalysis (async, S3-based) which supports documents of any size.
+ */
+@Injectable()
+export class TextractService {
+  private readonly client: TextractClient;
+  private readonly bucket: string;
+  private readonly logger = new Logger(TextractService.name);
+
+  constructor(private readonly config: ConfigService) {
+    this.client = new TextractClient({
+      region: config.get<string>('aws.region') ?? 'sa-east-1',
+      credentials: {
+        accessKeyId: config.get<string>('aws.accessKeyId') ?? '',
+        secretAccessKey: config.get<string>('aws.secretAccessKey') ?? '',
+      },
+    });
+    this.bucket = config.get<string>('aws.s3Bucket') ?? '';
+  }
+
+  async analyzeTables(s3Key: string): Promise<TextractTable[]> {
+    const startResponse = await this.client.send(
+      new StartDocumentAnalysisCommand({
+        DocumentLocation: {
+          S3Object: { Bucket: this.bucket, Name: s3Key },
+        },
+        FeatureTypes: ['TABLES'],
+      }),
+    );
+    const jobId = startResponse.JobId;
+    if (!jobId) throw new Error('Textract did not return a JobId');
+    this.logger.log(`Textract job started: ${jobId} for s3://${this.bucket}/${s3Key}`);
+    const blocks = await this.pollUntilComplete(jobId);
+    return this.blocksToTables(blocks);
+  }
+
+  private async pollUntilComplete(jobId: string): Promise<Block[]> {
+    const MAX_WAIT_MS = 5 * 60 * 1000;
+    const POLL_INTERVAL_MS = 5_000;
+    const deadline = Date.now() + MAX_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      const response = await this.client.send(
+        new GetDocumentAnalysisCommand({ JobId: jobId }),
+      );
+      if (response.JobStatus === 'FAILED') {
+        throw new Error(`Textract job failed: ${response.StatusMessage ?? 'Unknown error'}`);
+      }
+      if (response.JobStatus === 'SUCCEEDED') {
+        const allBlocks: Block[] = [...(response.Blocks ?? [])];
+        let nextToken = response.NextToken;
+        while (nextToken) {
+          const page = await this.client.send(
+            new GetDocumentAnalysisCommand({ JobId: jobId, NextToken: nextToken }),
+          );
+          allBlocks.push(...(page.Blocks ?? []));
+          nextToken = page.NextToken;
+        }
+        this.logger.log(`Textract job ${jobId} completed: ${allBlocks.length} blocks`);
+        return allBlocks;
+      }
+      // JobStatus === 'IN_PROGRESS' — continue polling
+    }
+    throw new Error(`Textract job timed out after 5 minutes (jobId=${jobId})`);
+  }
+
+  private blocksToTables(blocks: Block[]): TextractTable[] {
+    const blockMap = new Map<string, Block>(
+      blocks.filter((b) => b.Id).map((b) => [b.Id!, b]),
+    );
+    const tableBlocks = blocks.filter((b) => b.BlockType === 'TABLE');
+    return tableBlocks.map((table) => {
+      const cellIds =
+        table.Relationships?.filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids ?? []) ?? [];
+      const cells: TextractCell[] = cellIds
+        .map((id) => blockMap.get(id))
+        .filter(
+          (b): b is Block =>
+            b?.BlockType === 'CELL' && b.RowIndex != null && b.ColumnIndex != null,
+        )
+        .map((cell) => {
+          const wordIds =
+            cell.Relationships?.filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids ?? []) ?? [];
+          const text = wordIds
+            .map((id) => blockMap.get(id))
+            .filter((b): b is Block => b?.BlockType === 'WORD' || b?.BlockType === 'LINE')
+            .map((b) => b.Text ?? '')
+            .join(' ');
+          return {
+            rowIndex: cell.RowIndex! - 1,
+            colIndex: cell.ColumnIndex! - 1,
+            rowSpan: cell.RowSpan ?? 1,
+            colSpan: cell.ColumnSpan ?? 1,
+            text,
+            confidence: cell.Confidence ?? 0,
+          };
+        });
+      const maxRow = cells.reduce((m, c) => Math.max(m, c.rowIndex + c.rowSpan), 0);
+      const maxCol = cells.reduce((m, c) => Math.max(m, c.colIndex + c.colSpan), 0);
+      return { page: table.Page ?? 1, cells, rows: maxRow, cols: maxCol };
+    });
   }
 }
