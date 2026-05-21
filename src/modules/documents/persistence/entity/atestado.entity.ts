@@ -1,13 +1,13 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  OneToMany,
+    Column,
+    CreateDateColumn,
+    Entity,
+    OneToMany,
+    PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Obra } from '../../../extraction/persistence/entity/obra.entity';
-import { Chunk } from '../../../ingestion/persistence/entity/chunk.entity';
 import { ServicoExecutado } from '../../../extraction/persistence/entity/servico-executado.entity';
+import { Chunk } from '../../../ingestion/persistence/entity/chunk.entity';
 
 export enum AtestadoStatus {
   PENDING = 'PENDING',
