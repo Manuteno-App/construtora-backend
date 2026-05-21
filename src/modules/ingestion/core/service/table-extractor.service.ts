@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { OcrResult, TextractTable } from './vision.service';
 
 export interface ServicoItem {
@@ -32,6 +32,8 @@ const TABLE_ROW_RE =
 
 @Injectable()
 export class TableExtractorService {
+  private readonly logger = new Logger(TableExtractorService.name);
+
   /**
    * Picks the best extraction strategy.
    * Priority: (1) rawServiceRows from Vision structured block, (2) Textract TABLE blocks, (3) regex over raw text.
@@ -76,6 +78,11 @@ export class TableExtractorService {
       const allRows = [...new Set(table.cells.map((c) => c.rowIndex))].sort(
         (a, b) => a - b,
       );
+
+      this.logger.log(
+        `Textract table p${table.page}: ${table.cells.length} cells, ${allRows.length} rows, ${table.cols} cols`,
+      );
+
       if (allRows.length < 2) continue;
 
       // Detect column roles from the header row
@@ -87,7 +94,7 @@ export class TableExtractorService {
 
       for (const cell of table.cells.filter((c) => c.rowIndex === headerRow)) {
         const t = cell.text.toUpperCase().trim();
-        if (/NATUREZA|DESCRI[CÇ]|SERVI[CÇ]O/.test(t)) descCol = cell.colIndex;
+        if (/NATUREZA|DESCRI[CÇ]|SERVI[CÇ]O|DISCRIMINA|DENOMINA|ATIVIDADE|ESPECIFICA|OBJETO/.test(t)) descCol = cell.colIndex;
         else if (/^UNID|^UN\.?$/.test(t)) unidadeCol = cell.colIndex;
         else if (/QUANT|QTD|QDE/.test(t)) quantidadeCol = cell.colIndex;
         else if (/^C[OÓ]D|^ITEM$|^N[º°.]\s*$|^#/.test(t)) codigoCol = cell.colIndex;
@@ -108,6 +115,10 @@ export class TableExtractorService {
 
       if (descCol === -1) continue;
 
+      this.logger.log(
+        `Textract table p${table.page}: descCol=${descCol} unidadeCol=${unidadeCol} quantidadeCol=${quantidadeCol} codigoCol=${codigoCol}`,
+      );
+
       let currentCategory = 'GERAL';
 
       for (const rowIdx of allRows.slice(1)) {
@@ -122,6 +133,21 @@ export class TableExtractorService {
         // Handles both all-caps headers AND hierarchical code rows (01, 01.01)
         if (!hasQuantity) {
           if (descText && isValidCategoryHeader(descText)) currentCategory = descText;
+          // When the quantity column was not identified at all, still extract rows that
+          // look like service descriptions (mixed/lower-case) rather than section headers.
+          if (quantidadeCol === -1 && !CATEGORY_HEADER_RE.test(descText)) {
+            const unidade =
+              unidadeCol >= 0 ? (grid.get(`${rowIdx},${unidadeCol}`) ?? undefined) : undefined;
+            const codigo =
+              codigoCol >= 0 ? (grid.get(`${rowIdx},${codigoCol}`) ?? undefined) : undefined;
+            results.push({
+              categoria: currentCategory,
+              codigo: codigo || undefined,
+              descricao: descText,
+              unidade: unidade || undefined,
+              quantidade: undefined,
+            });
+          }
           continue;
         }
 

@@ -694,10 +694,23 @@ export class TextractService {
       blocks.filter((b) => b.Id).map((b) => [b.Id!, b]),
     );
     const tableBlocks = blocks.filter((b) => b.BlockType === 'TABLE');
+    this.logger.log(`Textract blocksToTables: ${tableBlocks.length} TABLE blocks from ${blocks.length} total blocks`);
     return tableBlocks.map((table) => {
-      const cellIds =
+      const directChildIds =
         table.Relationships?.filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids ?? []) ?? [];
-      const cells: TextractCell[] = cellIds
+      // Resolve MERGED_CELL blocks: their component CELLs may not be direct TABLE children
+      const allCellIds: string[] = [];
+      for (const id of directChildIds) {
+        const block = blockMap.get(id);
+        if (block?.BlockType === 'CELL') {
+          allCellIds.push(id);
+        } else if (block?.BlockType === 'MERGED_CELL') {
+          const mergedChildIds =
+            block.Relationships?.filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids ?? []) ?? [];
+          allCellIds.push(...mergedChildIds);
+        }
+      }
+      const cells: TextractCell[] = allCellIds
         .map((id) => blockMap.get(id))
         .filter(
           (b): b is Block =>
