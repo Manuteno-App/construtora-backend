@@ -82,7 +82,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
       .insert()
       .into(ServicoExecutado)
       .values(rows as any[])
-      .orIgnore()
+      .orUpdate(['descricao', 'unidade', 'quantidade', 'categoria', 'obra_id'], ['atestado_id', 'codigo', 'trecho'])
       .execute();
   }
 

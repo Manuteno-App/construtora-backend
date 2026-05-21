@@ -22,4 +22,16 @@ export class ContratoRepository extends DefaultTypeOrmRepository<Contrato> {
     const entity = super.create(data);
     return (await super.save(entity)) as Contrato;
   }
+
+  /** Upsert a contrato by obra+empresa: updates numero, data and valor if one already exists, creates otherwise. */
+  async upsertByObraAndEmpresa(data: CreateContratoData): Promise<Contrato> {
+    const existing = await this.findOne({ where: { obraId: data.obraId, empresaId: data.empresaId } });
+    if (existing) {
+      existing.numero = data.numero;
+      existing.data = data.data;
+      existing.valor = data.valor;
+      return (await super.save(existing)) as Contrato;
+    }
+    return this.createAndSave(data);
+  }
 }

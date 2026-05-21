@@ -74,6 +74,16 @@ export class ObraRepository extends DefaultTypeOrmRepository<Obra> {
     return (await super.save(entity)) as Obra;
   }
 
+  /** Upsert an obra by atestado_id: updates all fields if one already exists, creates otherwise. */
+  async upsertByAtestadoId(data: CreateObraData): Promise<Obra> {
+    const existing = await this.findOne({ where: { atestadoId: data.atestadoId } });
+    if (existing) {
+      Object.assign(existing, data);
+      return (await super.save(existing)) as Obra;
+    }
+    return this.createAndSave(data);
+  }
+
   async aggregateEmpresas(limit = 15): Promise<EmpresaRankingRow[]> {
     return this.query<EmpresaRankingRow>(
       `

@@ -51,7 +51,7 @@ export class EntityOrchestrationService {
     let savedObraId: string | undefined;
 
     if (entities.obra?.nome) {
-      const obra = await this.obraRepo.createAndSave({
+      const obra = await this.obraRepo.upsertByAtestadoId({
         atestadoId,
         nome: entities.obra.nome,
         local: entities.obra.local,
@@ -78,7 +78,7 @@ export class EntityOrchestrationService {
           });
 
           if (entities.contrato) {
-            await this.contratoRepo.createAndSave({
+            await this.contratoRepo.upsertByObraAndEmpresa({
               obraId: obra.id,
               empresaId: empresa.id,
               numero: entities.contrato.numero,

@@ -1,8 +1,6 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
-import { InjectDataSource } from '@nestjs/typeorm';
 import { Queue } from 'bullmq';
-import { DataSource } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { DocumentService } from '../../../documents/core/service/document.service';
 import { AtestadoStatus } from '../../../documents/persistence/entity/atestado.entity';
@@ -16,7 +14,6 @@ export class IngestionService {
     private readonly storage: StorageService,
     private readonly documentService: DocumentService,
     private readonly chunkRepo: ChunkRepository,
-    @InjectDataSource() private readonly dataSource: DataSource,
     @InjectQueue(INGESTION_QUEUE) private readonly ingestionQueue: Queue,
   ) {}
 
@@ -51,9 +48,8 @@ export class IngestionService {
   async reindex(id: string): Promise<{ atestadoId: string; originalFilename: string; status: AtestadoStatus }> {
     const atestado = await this.documentService.findById(id);
 
-    // Clean all previously extracted data so reprocessing starts fresh
-    await this.dataSource.query('DELETE FROM servicos_executados WHERE atestado_id = $1', [id]);
-    await this.dataSource.query('DELETE FROM obras WHERE atestado_id = $1', [id]);
+    // Chunks and embeddings are always regenerated from the PDF — delete them so they are recreated fresh.
+    // Obras, contratos and servicos_executados are preserved and upserted during extraction.
     await this.chunkRepo.deleteByAtestadoId(id);
     await this.documentService.updateStatus(id, AtestadoStatus.PENDING, null);
     await this.documentService.updateLastReprocessedAt(id);
