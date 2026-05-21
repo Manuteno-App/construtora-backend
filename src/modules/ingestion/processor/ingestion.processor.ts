@@ -5,8 +5,7 @@ import { AtestadoStatus } from '../../documents/persistence/entity/atestado.enti
 import { DOCUMENTS_API, IDocumentsApi } from '../../documents/public-api/interface/documents-api.interface';
 import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../../infrastructure/queue/queue.module';
 import { StorageService } from '../../infrastructure/storage/storage.service';
-import { TableExtractorService } from '../core/service/table-extractor.service';
-import { ServicoItem } from '../core/service/table-extractor.service';
+import { ServicoItem, TableExtractorService } from '../core/service/table-extractor.service';
 import { TextractService, VisionService } from '../core/service/vision.service';
 import { ChunkRepository, CreateChunkData } from '../persistence/repository/chunk.repository';
 

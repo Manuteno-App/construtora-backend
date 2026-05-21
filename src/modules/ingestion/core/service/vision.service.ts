@@ -1,11 +1,11 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import {
   Block,
   GetDocumentAnalysisCommand,
   StartDocumentAnalysisCommand,
   TextractClient,
 } from '@aws-sdk/client-textract';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { isValidCategoryHeader } from './table-extractor.service';
 
