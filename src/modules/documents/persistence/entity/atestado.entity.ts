@@ -36,6 +36,9 @@ export class Atestado {
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 
+  @Column({ name: 'last_reprocessed_at', type: 'timestamptz', nullable: true })
+  lastReprocessedAt?: Date;
+
   @OneToMany(() => Obra, (obra) => obra.atestado)
   obras!: Obra[];
 

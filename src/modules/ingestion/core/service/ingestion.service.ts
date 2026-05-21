@@ -56,6 +56,7 @@ export class IngestionService {
     await this.dataSource.query('DELETE FROM obras WHERE atestado_id = $1', [id]);
     await this.chunkRepo.deleteByAtestadoId(id);
     await this.documentService.updateStatus(id, AtestadoStatus.PENDING, null);
+    await this.documentService.updateLastReprocessedAt(id);
     await this.ingestionQueue.add('process-pdf', { atestadoId: id });
 
     return {

@@ -6,6 +6,7 @@ export interface AtestadoRef {
   originalFilename: string;
   status: AtestadoStatus;
   createdAt: Date;
+  lastReprocessedAt?: Date;
   errorMessage?: string;
 }
 

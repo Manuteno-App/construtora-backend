@@ -60,6 +60,10 @@ export class AtestadoRepository extends DefaultTypeOrmRepository<Atestado> {
     );
   }
 
+  async updateLastReprocessedAt(id: string): Promise<void> {
+    await this.update({ id }, { lastReprocessedAt: new Date() });
+  }
+
   async deleteById(id: string): Promise<void> {
     await this.delete({ id });
   }
