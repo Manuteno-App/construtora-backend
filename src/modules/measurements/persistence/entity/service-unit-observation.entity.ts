@@ -36,7 +36,7 @@ export class ServiceUnitObservation {
   @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
   quantidade?: number;
 
-  @Column({ name: 'raw_unit_symbol', type: 'varchar', length: 40, nullable: true })
+  @Column({ name: 'raw_unit_symbol', type: 'varchar', length: 255, nullable: true })
   rawUnitSymbol?: string;
 
   @Column({ name: 'evidence_json', type: 'text', default: '{}' })

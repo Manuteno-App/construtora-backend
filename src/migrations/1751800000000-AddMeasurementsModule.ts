@@ -80,7 +80,7 @@ export class AddMeasurementsModule1751800000000 implements MigrationInterface {
         normalized_service_key VARCHAR(255) NOT NULL,
         unit_id UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
         quantidade NUMERIC(18,4),
-        raw_unit_symbol VARCHAR(40),
+        raw_unit_symbol VARCHAR(255),
         evidence_json TEXT NOT NULL DEFAULT '{}',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -90,7 +90,7 @@ export class AddMeasurementsModule1751800000000 implements MigrationInterface {
     await queryRunner.query(`
       ALTER TABLE servicos_executados
         ADD COLUMN IF NOT EXISTS unit_id UUID REFERENCES units(id) ON DELETE SET NULL,
-        ADD COLUMN IF NOT EXISTS unit_symbol_raw VARCHAR(40),
+        ADD COLUMN IF NOT EXISTS unit_symbol_raw VARCHAR(255),
         ADD COLUMN IF NOT EXISTS normalized_service_key VARCHAR(255);
     `);
 

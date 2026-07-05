@@ -55,7 +55,7 @@ export class ServicoExecutado {
   @JoinColumn({ name: 'unit_id' })
   unit?: Unit;
 
-  @Column({ name: 'unit_symbol_raw', nullable: true })
+  @Column({ name: 'unit_symbol_raw', nullable: true, length: 255 })
   unitSymbolRaw?: string;
 
   @Column({ name: 'normalized_service_key', nullable: true })
