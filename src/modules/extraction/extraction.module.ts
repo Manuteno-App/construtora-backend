@@ -21,6 +21,7 @@ import {
 import { DocumentsModule } from '../documents/documents.module';
 import { IngestionModule } from '../ingestion/ingestion.module';
 import { EXTRACTION_QUEUE, INDEXING_QUEUE } from '../infrastructure/queue/queue.module';
+import { MeasurementsModule } from '../measurements/measurements.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { EXTRACTION_QUEUE, INDEXING_QUEUE } from '../infrastructure/queue/queue.
     BullModule.registerQueue({ name: EXTRACTION_QUEUE }, { name: INDEXING_QUEUE }),
     DocumentsModule,
     IngestionModule,
+    MeasurementsModule,
   ],
   providers: [
     ObraRepository,

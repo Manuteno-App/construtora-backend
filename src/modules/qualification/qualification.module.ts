@@ -3,8 +3,10 @@ import { QualificationService } from './core/service/qualification.service';
 import { QualificationController } from './http/rest/controller/qualification.controller';
 import { QualificationFacade } from './public-api/facade/qualification.facade';
 import { QUALIFICATION_API } from './public-api/interface/qualification-api.interface';
+import { MeasurementsModule } from '../measurements/measurements.module';
 
 @Module({
+  imports: [MeasurementsModule],
   providers: [
     QualificationService,
     QualificationFacade,

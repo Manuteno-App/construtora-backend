@@ -12,6 +12,9 @@ export interface ServicoExecutadoRow {
   codigo?: string;
   descricao: string;
   unidade?: string;
+  unitId?: string;
+  unitSymbolRaw?: string;
+  normalizedServiceKey?: string;
   quantidade?: number;
 }
 
@@ -23,6 +26,7 @@ export interface AtestadoRef {
 export interface QuantitativoRow {
   descricao: string;
   unidade: string | null;
+  unitId?: string | null;
   total: number;
   atestados: string[];
   atestadoRefs: AtestadoRef[];
@@ -49,6 +53,7 @@ export interface ServiceContextResult {
   descricao: string;
   quantidade: number | null;
   unidade: string | null;
+  unitId?: string | null;
   categoria: string | null;
   trecho: string | null;
 }
@@ -82,7 +87,10 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
       .insert()
       .into(ServicoExecutado)
       .values(rows as any[])
-      .orUpdate(['descricao', 'unidade', 'quantidade', 'categoria', 'obra_id'], ['atestado_id', 'codigo', 'trecho'])
+      .orUpdate(
+        ['descricao', 'unidade', 'unit_id', 'unit_symbol_raw', 'normalized_service_key', 'quantidade', 'categoria', 'obra_id'],
+        ['atestado_id', 'codigo', 'trecho'],
+      )
       .execute();
   }
 
@@ -135,6 +143,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
       SELECT
         outer_q.descricao,
         outer_q.unidade,
+        outer_q.unit_id AS "unitId",
         SUM(outer_q.qty)::float AS total,
         array_agg(outer_q.atestado_id) AS atestados,
         json_agg(jsonb_build_object('id', outer_q.atestado_id, 'filename', outer_q.filename)) AS "atestadoRefs"
@@ -142,6 +151,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
         SELECT
           s.descricao,
           s.unidade,
+          s.unit_id,
           s.atestado_id,
           COALESCE(MAX(a.original_filename), s.atestado_id::text) AS filename,
           SUM(s.quantidade) AS qty
@@ -149,9 +159,9 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
         LEFT JOIN atestados a ON a.id = s.atestado_id
         ${obrasJoin}
         ${whereClause}
-        GROUP BY s.descricao, s.unidade, s.atestado_id
+        GROUP BY s.descricao, s.unidade, s.unit_id, s.atestado_id
       ) outer_q
-      GROUP BY outer_q.descricao, outer_q.unidade
+      GROUP BY outer_q.descricao, outer_q.unidade, outer_q.unit_id
       ${havingClause}
       ORDER BY total DESC
     `;
@@ -159,6 +169,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     const rows = await this.query<{
       descricao: string;
       unidade: string | null;
+      unitId: string | null;
       total: string;
       atestados: string[];
       atestadoRefs: AtestadoRef[] | string;
@@ -167,6 +178,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     return rows.map((r) => ({
       descricao: r.descricao,
       unidade: r.unidade,
+      unitId: r.unitId,
       total: parseFloat(r.total),
       atestados: r.atestados,
       atestadoRefs: typeof r.atestadoRefs === 'string'
@@ -194,6 +206,7 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
          s.descricao,
          s.quantidade::float                                  AS quantidade,
          s.unidade,
+         s.unit_id                                            AS "unitId",
          s.categoria,
          s.trecho
        FROM servicos_executados s

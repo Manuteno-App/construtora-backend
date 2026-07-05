@@ -15,6 +15,7 @@ import { StorageModule } from './modules/infrastructure/storage/storage.module';
 import { IngestionModule } from './modules/ingestion/ingestion.module';
 import { IntelligenceModule } from './modules/intelligence/intelligence.module';
 import { McpModule } from './modules/mcp/mcp.module';
+import { MeasurementsModule } from './modules/measurements/measurements.module';
 import { QualificationModule } from './modules/qualification/qualification.module';
 
 @Module({
@@ -35,6 +36,7 @@ import { QualificationModule } from './modules/qualification/qualification.modul
     IndexingModule,
     IntelligenceModule,
     AuthModule,
+    MeasurementsModule,
     QualificationModule,
     McpModule,
   ],

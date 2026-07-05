@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { ServicoItem } from '../../../ingestion/core/service/table-extractor.service';
+import { MeasurementsService } from '../../../measurements/core/service/measurements.service';
 import { EmpresaTipo } from '../../persistence/entity/empresa.entity';
 import { ContratoRepository } from '../../persistence/repository/contrato.repository';
 import { EmpresaRepository } from '../../persistence/repository/empresa.repository';
@@ -33,6 +34,7 @@ export class EntityOrchestrationService {
     private readonly empresaRepo: EmpresaRepository,
     private readonly contratoRepo: ContratoRepository,
     private readonly servicoRepo: ServicoExecutadoRepository,
+    private readonly measurements: MeasurementsService,
   ) {}
 
   /** Safely parse a date string returned by the LLM.
@@ -91,17 +93,39 @@ export class EntityOrchestrationService {
     }
 
     if (tabelaServicos.length > 0) {
+      const resolvedRows = await Promise.all(
+        tabelaServicos.map(async (s) => {
+          const resolvedUnit = await this.measurements.resolveUnit(s.unidade, s.descricao);
+          return {
+            atestadoId,
+            obraId: savedObraId,
+            trecho: s.trecho,
+            categoria: s.categoria,
+            codigo: s.codigo,
+            descricao: s.descricao,
+            unidade: resolvedUnit.canonicalSymbol ?? s.unidade,
+            unitId: resolvedUnit.unitId,
+            unitSymbolRaw: s.unidade,
+            normalizedServiceKey: this.measurements.normalizeServiceKey(s.descricao),
+            quantidade: s.quantidade,
+          };
+        }),
+      );
+
       await this.servicoRepo.upsertMany(
-        tabelaServicos.map((s) => ({
-          atestadoId,
-          obraId: savedObraId,
-          trecho: s.trecho,
-          categoria: s.categoria,
-          codigo: s.codigo,
-          descricao: s.descricao,
-          unidade: s.unidade,
-          quantidade: s.quantidade,
-        })),
+        resolvedRows,
+      );
+
+      await Promise.all(
+        resolvedRows.map((row) =>
+          this.measurements.recordServiceObservation({
+            atestadoId,
+            serviceDescription: row.descricao,
+            unitId: row.unitId,
+            quantity: row.quantidade,
+            rawUnitSymbol: row.unitSymbolRaw,
+          }),
+        ),
       );
     }
 

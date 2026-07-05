@@ -238,6 +238,7 @@ export class McpController {
         const result = await this.qualificationService.findAtestadosComQuantidadeMinima(
           args.descricoes as string[],
           args.minQuantidade as number,
+          args.unidade as string | undefined,
           args.filters as QualificationFilters | undefined,
         );
         return { content: [{ type: 'text', text: toText(result) }] };
@@ -246,6 +247,7 @@ export class McpController {
         const result = await this.qualificationService.findCumulativoAtestados(
           args.descricoes as string[],
           args.minQuantidade as number,
+          args.unidade as string | undefined,
           args.filters as QualificationFilters | undefined,
         );
         return { content: [{ type: 'text', text: toText(result) }] };

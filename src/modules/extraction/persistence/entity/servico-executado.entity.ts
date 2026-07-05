@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { Atestado } from '../../../documents/persistence/entity/atestado.entity';
 import { Obra } from './obra.entity';
+import { Unit } from '../../../measurements/persistence/entity/unit.entity';
 
 @Entity('servicos_executados')
 @Unique(['atestadoId', 'codigo', 'trecho'])
@@ -46,6 +47,19 @@ export class ServicoExecutado {
 
   @Column({ nullable: true })
   unidade?: string;
+
+  @Column({ name: 'unit_id', nullable: true })
+  unitId?: string;
+
+  @ManyToOne(() => Unit, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'unit_id' })
+  unit?: Unit;
+
+  @Column({ name: 'unit_symbol_raw', nullable: true })
+  unitSymbolRaw?: string;
+
+  @Column({ name: 'normalized_service_key', nullable: true })
+  normalizedServiceKey?: string;
 
   @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
   quantidade?: number;

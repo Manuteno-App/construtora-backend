@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { QualificationService } from '../../core/service/qualification.service';
 import {
+  BundleEvaluationRequest,
+  BundleEvaluationResult,
   BundleCoverageResult,
   CumulativeResult,
   IQualificationApi,
@@ -26,17 +28,19 @@ export class QualificationFacade implements IQualificationApi {
   findAtestadosComQuantidadeMinima(
     descricoes: string[],
     minQty: number,
+    unidade?: string,
     filters?: QualificationFilters,
   ): Promise<QualificationSource[]> {
-    return this.qualificationService.findAtestadosComQuantidadeMinima(descricoes, minQty, filters);
+    return this.qualificationService.findAtestadosComQuantidadeMinima(descricoes, minQty, unidade, filters);
   }
 
   findCumulativoAtestados(
     descricoes: string[],
     minQty: number,
+    unidade?: string,
     filters?: QualificationFilters,
   ): Promise<CumulativeResult> {
-    return this.qualificationService.findCumulativoAtestados(descricoes, minQty, filters);
+    return this.qualificationService.findCumulativoAtestados(descricoes, minQty, unidade, filters);
   }
 
   findBundleSingleCoverage(
@@ -51,5 +55,9 @@ export class QualificationFacade implements IQualificationApi {
     filters?: QualificationFilters,
   ): Promise<ServiceCoverage[]> {
     return this.qualificationService.findBundleCumulativeCoverage(services, filters);
+  }
+
+  evaluateBundlePolicy(request: BundleEvaluationRequest): Promise<BundleEvaluationResult> {
+    return this.qualificationService.evaluateBundlePolicy(request);
   }
 }

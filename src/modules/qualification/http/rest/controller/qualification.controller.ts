@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { QualificationService } from '../../../core/service/qualification.service';
-import { FindBundleDto, FindWithMinQuantityDto, FindWithServiceDto } from '../dto/qualification.dto';
+import { EvaluateBundleDto, FindBundleDto, FindWithMinQuantityDto, FindWithServiceDto } from '../dto/qualification.dto';
 
 @ApiTags('qualification')
 @Controller('qualification')
@@ -29,6 +29,7 @@ export class QualificationController {
     return this.qualificationService.findAtestadosComQuantidadeMinima(
       dto.descricoes,
       dto.minQuantidade,
+      dto.unidade,
       dto.filters,
     );
   }
@@ -37,7 +38,7 @@ export class QualificationController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'F3 — Somatório de atestados para atingir quantidade mínima (acervo cumulativo)' })
   findCumulative(@Body() dto: FindWithMinQuantityDto) {
-    return this.qualificationService.findCumulativoAtestados(dto.descricoes, dto.minQuantidade, dto.filters);
+    return this.qualificationService.findCumulativoAtestados(dto.descricoes, dto.minQuantidade, dto.unidade, dto.filters);
   }
 
   @Post('find-bundle-single')
@@ -54,5 +55,12 @@ export class QualificationController {
   @ApiOperation({ summary: 'F5 — Somatório de atestados para cada serviço do bundle' })
   findBundleCumulative(@Body() dto: FindBundleDto) {
     return this.qualificationService.findBundleCumulativeCoverage(dto.services, dto.filters);
+  }
+
+  @Post('evaluate-bundle')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Avalia bundle de critérios com política explícita de comprovação' })
+  evaluateBundle(@Body() dto: EvaluateBundleDto) {
+    return this.qualificationService.evaluateBundlePolicy(dto);
   }
 }
