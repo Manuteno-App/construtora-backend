@@ -31,7 +31,7 @@ export class Atestado {
   status!: AtestadoStatus;
 
   @Column({ nullable: true, type: 'text', name: 'error_message' })
-  errorMessage?: string;
+  errorMessage?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

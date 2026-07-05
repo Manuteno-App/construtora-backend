@@ -7,7 +7,7 @@ export interface AtestadoRef {
   status: AtestadoStatus;
   createdAt: Date;
   lastReprocessedAt?: Date;
-  errorMessage?: string;
+  errorMessage?: string | null;
 }
 
 /**

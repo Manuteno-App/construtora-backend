@@ -64,7 +64,7 @@ export class IngestionService {
 
   async getStatus(
     id: string,
-  ): Promise<{ atestadoId: string; status: AtestadoStatus; originalFilename: string; createdAt: Date; errorMessage?: string }> {
+  ): Promise<{ atestadoId: string; status: AtestadoStatus; originalFilename: string; createdAt: Date; errorMessage?: string | null }> {
     const atestado = await this.documentService.findById(id);
     return {
       atestadoId: atestado.id,
