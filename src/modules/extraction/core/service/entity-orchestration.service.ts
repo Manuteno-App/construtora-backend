@@ -93,24 +93,29 @@ export class EntityOrchestrationService {
     }
 
     if (tabelaServicos.length > 0) {
-      const resolvedRows = await Promise.all(
-        tabelaServicos.map(async (s) => {
-          const resolvedUnit = await this.measurements.resolveUnit(s.unidade, s.descricao);
-          return {
-            atestadoId,
-            obraId: savedObraId,
-            trecho: s.trecho,
-            categoria: s.categoria,
-            codigo: s.codigo,
-            descricao: s.descricao,
-            unidade: resolvedUnit.canonicalSymbol ?? s.unidade,
-            unitId: resolvedUnit.unitId,
-            unitSymbolRaw: s.unidade,
-            normalizedServiceKey: this.measurements.normalizeServiceKey(s.descricao),
-            quantidade: s.quantidade,
-          };
-        }),
-      );
+      const resolutionCache = new Map<string, Awaited<ReturnType<MeasurementsService['resolveUnit']>>>();
+      const resolvedRows = [];
+      for (const s of tabelaServicos) {
+        const cacheKey = `${s.unidade ?? ''}::${s.descricao ?? ''}`;
+        let resolvedUnit = resolutionCache.get(cacheKey);
+        if (!resolvedUnit) {
+          resolvedUnit = await this.measurements.resolveUnit(s.unidade, s.descricao);
+          resolutionCache.set(cacheKey, resolvedUnit);
+        }
+        resolvedRows.push({
+          atestadoId,
+          obraId: savedObraId,
+          trecho: s.trecho,
+          categoria: s.categoria,
+          codigo: s.codigo,
+          descricao: s.descricao,
+          unidade: resolvedUnit.canonicalSymbol ?? s.unidade,
+          unitId: resolvedUnit.unitId,
+          unitSymbolRaw: s.unidade,
+          normalizedServiceKey: this.measurements.normalizeServiceKey(s.descricao),
+          quantidade: s.quantidade,
+        });
+      }
 
       await this.servicoRepo.upsertMany(
         resolvedRows,

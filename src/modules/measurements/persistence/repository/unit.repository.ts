@@ -21,6 +21,10 @@ export class UnitRepository extends DefaultTypeOrmRepository<Unit> {
     return this.findOne({ where: { id }, relations: { family: true } });
   }
 
+  findByCanonicalSymbol(canonicalSymbol: string): Promise<Unit | null> {
+    return this.findOne({ where: { canonicalSymbol }, relations: { family: true } });
+  }
+
   async findByNormalizedOrAlias(normalizedSymbol: string): Promise<Unit | null> {
     const rows = await this.query<Unit>(
       `SELECT u.*

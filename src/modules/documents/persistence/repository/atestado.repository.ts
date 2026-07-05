@@ -62,7 +62,7 @@ export class AtestadoRepository extends DefaultTypeOrmRepository<Atestado> {
   ): Promise<void> {
     await this.update(
       { id },
-      { status, ...(errorMessage !== undefined ? { errorMessage: errorMessage ?? undefined } : {}) },
+      { status, ...(errorMessage !== undefined ? { errorMessage: errorMessage ?? null } : {}) },
     );
   }
 

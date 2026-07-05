@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
+import { QueryFailedError } from 'typeorm';
 import {
   TechnicalUnitConversion,
   TechnicalUnitConversionStatus,
@@ -216,7 +217,22 @@ export class MeasurementsService implements IMeasurementsApi {
       return (await this.units.updateEntity(id, base)) as Unit;
     }
 
-    return this.units.saveEntity(this.units.createEntity(base));
+    const existing = (await this.units.findByCanonicalSymbol(canonicalSymbol))
+      ?? (await this.units.findByNormalizedOrAlias(normalizedSymbol));
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      return await this.units.saveEntity(this.units.createEntity(base));
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        const conflicted = (await this.units.findByCanonicalSymbol(canonicalSymbol))
+          ?? (await this.units.findByNormalizedOrAlias(normalizedSymbol));
+        if (conflicted) return conflicted;
+      }
+      throw error;
+    }
   }
 
   async createOrUpdateMathematicalConversion(
@@ -438,6 +454,11 @@ Contexto de serviço: ${serviceDescription ?? '-'}
     } catch {
       return fallback;
     }
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return error instanceof QueryFailedError
+      && (error as QueryFailedError & { driverError?: { code?: string } }).driverError?.code === '23505';
   }
 
   private toTechnicalConversionView(item: TechnicalUnitConversion): TechnicalUnitConversionView {

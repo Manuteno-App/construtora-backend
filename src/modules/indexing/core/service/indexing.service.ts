@@ -47,7 +47,7 @@ export class IndexingService {
         }
       }
 
-      await this.documentsApi.updateAtestadoStatus(atestadoId, AtestadoStatus.DONE);
+      await this.documentsApi.updateAtestadoStatus(atestadoId, AtestadoStatus.DONE, null);
       this.logger.log(`Indexing DONE for ${atestadoId}`);
     } catch (err) {
       this.logger.error(`Indexing failed for ${atestadoId}`, err);
