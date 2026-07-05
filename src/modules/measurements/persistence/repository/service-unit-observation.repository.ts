@@ -21,12 +21,12 @@ export class ServiceUnitObservationRepository extends DefaultTypeOrmRepository<S
     avgQuantity: string | null;
   }>> {
     return this.query(
-      `SELECT
+       `SELECT
          o.normalized_service_key AS "normalizedServiceKey",
          MAX(o.service_description) AS "serviceDescription",
          o.unit_id AS "unitId",
          MAX(u.canonical_symbol) AS "unitSymbol",
-         MAX(u.family_id) AS "familyId",
+         u.family_id AS "familyId",
          MAX(f.name) AS "familyName",
          COUNT(*)::text AS "sampleCount",
          AVG(o.quantidade)::text AS "avgQuantity"
@@ -34,7 +34,7 @@ export class ServiceUnitObservationRepository extends DefaultTypeOrmRepository<S
        INNER JOIN units u ON u.id = o.unit_id
        INNER JOIN unit_families f ON f.id = u.family_id
        WHERE o.normalized_service_key = $1
-       GROUP BY o.normalized_service_key, o.unit_id`,
+       GROUP BY o.normalized_service_key, o.unit_id, u.family_id`,
       [normalizedServiceKey],
     );
   }
