@@ -81,6 +81,7 @@ export interface IMeasurementsApi {
   listConversions(): Promise<UnitConversion[]>;
   listTechnicalConversions(status?: TechnicalUnitConversionStatus): Promise<TechnicalUnitConversionView[]>;
   createOrUpdateUnit(payload: MeasurementUnitPayload, id?: string): Promise<Unit>;
+  deleteUnit(id: string): Promise<void>;
   createOrUpdateMathematicalConversion(payload: MeasurementUnitConversionPayload, id?: string): Promise<UnitConversion>;
   createOrUpdateTechnicalConversion(payload: TechnicalConversionPayload, id?: string): Promise<TechnicalUnitConversionView>;
   updateTechnicalConversionStatus(id: string, status: TechnicalUnitConversionStatus): Promise<TechnicalUnitConversionView>;

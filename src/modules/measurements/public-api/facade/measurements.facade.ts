@@ -14,6 +14,7 @@ export class MeasurementsFacade implements IMeasurementsApi {
   listConversions = this.service.listConversions.bind(this.service);
   listTechnicalConversions = this.service.listTechnicalConversions.bind(this.service);
   createOrUpdateUnit = this.service.createOrUpdateUnit.bind(this.service);
+  deleteUnit = this.service.deleteUnit.bind(this.service);
   createOrUpdateMathematicalConversion = this.service.createOrUpdateMathematicalConversion.bind(this.service);
   createOrUpdateTechnicalConversion = this.service.createOrUpdateTechnicalConversion.bind(this.service);
   updateTechnicalConversionStatus = this.service.updateTechnicalConversionStatus.bind(this.service);

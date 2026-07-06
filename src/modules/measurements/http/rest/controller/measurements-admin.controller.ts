@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { MeasurementsService } from '../../../core/service/measurements.service';
 import {
@@ -41,6 +41,12 @@ export class MeasurementsAdminController {
   @ApiOperation({ summary: 'Atualiza unidade' })
   updateUnit(@Param('id') id: string, @Body() body: UpsertUnitDto) {
     return this.measurements.createOrUpdateUnit(body, id);
+  }
+
+  @Delete('units/:id')
+  @ApiOperation({ summary: 'Exclui unidade' })
+  removeUnit(@Param('id') id: string) {
+    return this.measurements.deleteUnit(id);
   }
 
   @Get('conversions')

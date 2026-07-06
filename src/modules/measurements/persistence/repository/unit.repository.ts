@@ -78,4 +78,8 @@ export class UnitRepository extends DefaultTypeOrmRepository<Unit> {
     await this.update({ id }, data as Unit);
     return this.findById(id);
   }
+
+  async deleteById(id: string): Promise<void> {
+    await this.delete({ id });
+  }
 }

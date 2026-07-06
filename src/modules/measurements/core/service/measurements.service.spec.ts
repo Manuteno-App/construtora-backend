@@ -3,12 +3,51 @@ import { ConfigService } from '@nestjs/config';
 import { QueryFailedError } from 'typeorm';
 import { MeasurementsService } from './measurements.service';
 import { UnitFamily } from '../../persistence/entity/unit-family.entity';
+import { UnitOrigin, UnitStatus } from '../../persistence/entity/unit.entity';
 
 describe('MeasurementsService', () => {
   const normalization = {
-    normalize: (value?: string | null) => value?.toLowerCase().trim() ?? '',
+    normalize: (value?: string | null) => {
+      if (!value) return '';
+      const base = value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '')
+        .replace(/²/g, '2')
+        .replace(/³/g, '3')
+        .replace(/cent[ií]metros?/g, 'cm')
+        .replace(/mil[ií]metros?/g, 'mm')
+        .replace(/quil[oô]metros?/g, 'km')
+        .replace(/metros?/g, 'm')
+        .replace(/quilogramas?/g, 'kg')
+        .replace(/gramas?/g, 'g')
+        .replace(/toneladas?/g, 't')
+        .replace(/^ton$/, 't')
+        .replace(/litros?/g, 'l');
+      if (!base || /^[0-9.,]+$/.test(base)) return '';
+      const quantityAttachedMatch = base.match(/^[0-9]+(?:[.,][0-9]+)?([a-z]+[23]?)$/);
+      if (quantityAttachedMatch) {
+        const candidate = quantityAttachedMatch[1];
+        return new Set([
+          'mm', 'cm', 'm', 'km',
+          'g', 'kg', 't',
+          'l', 'ha',
+          'm2', 'km2', 'cm2', 'mm2',
+          'm3', 'cm3', 'mm3',
+        ]).has(candidate) ? candidate : '';
+      }
+      if (/[0-9]/.test(base) && !/^(?:mm|cm|m|km)[23]$/.test(base)) return '';
+      if (!/^[a-z]+[23]?$/.test(base)) return '';
+      return base;
+    },
     canonicalize: (value: string) => value,
     normalizeServiceKey: (value: string) => value.toLowerCase().replace(/\s+/g, '-'),
+    isValidStoredSymbol: (value?: string | null) => {
+      if (!value) return false;
+      return normalization.normalize(value) === value;
+    },
   };
 
   const config = {
@@ -29,6 +68,7 @@ describe('MeasurementsService', () => {
     createEntity: jest.fn((data) => data),
     saveEntity: jest.fn(async (data) => ({ id: 'unit', ...data })),
     updateEntity: jest.fn(),
+    deleteById: jest.fn(),
   };
 
   const conversionsRepo = {
@@ -103,6 +143,62 @@ describe('MeasurementsService', () => {
 
     expect(created.origin).toBe('USER');
     expect(created.familyId).toBe(family.id);
+  });
+
+  it('não duplica o símbolo canônico dentro dos aliases', async () => {
+    const family: UnitFamily = {
+      id: 'fam',
+      name: 'Comprimento',
+      slug: 'comprimento',
+      status: 'ACTIVE' as any,
+      units: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    familiesRepo.findBySlug.mockResolvedValue(family);
+    unitsRepo.findByCanonicalSymbol.mockResolvedValueOnce(null);
+    unitsRepo.findByNormalizedOrAlias.mockResolvedValueOnce(null);
+
+    await service.createOrUpdateUnit({
+      name: 'Quilômetro',
+      canonicalSymbol: 'km',
+      aliases: ['km', '50km', 'quilômetros'],
+      familyId: family.id,
+    });
+
+    expect(unitsRepo.createEntity).toHaveBeenCalledWith(expect.objectContaining({
+      canonicalSymbol: 'km',
+      normalizedSymbol: 'km',
+      aliasesJson: JSON.stringify([]),
+    }));
+  });
+
+  it('exclui unidade existente', async () => {
+    unitsRepo.findById.mockResolvedValueOnce({ id: 'unit-bad' });
+
+    await service.deleteUnit('unit-bad');
+
+    expect(unitsRepo.deleteById).toHaveBeenCalledWith('unit-bad');
+  });
+
+  it('falha ao excluir unidade inexistente', async () => {
+    unitsRepo.findById.mockResolvedValueOnce(null);
+
+    await expect(service.deleteUnit('missing-unit')).rejects.toThrow('Unit missing-unit não encontrado');
+    expect(unitsRepo.deleteById).not.toHaveBeenCalled();
+  });
+
+  it('oculta unidades persistidas com símbolo numérico inválido na listagem', async () => {
+    unitsRepo.list.mockResolvedValueOnce([
+      { id: 'valid', normalizedSymbol: 'km', origin: UnitOrigin.SYSTEM, status: UnitStatus.ACTIVE },
+      { id: 'bad-1', normalizedSymbol: '50km', origin: UnitOrigin.AI, status: UnitStatus.ACTIVE },
+      { id: 'bad-2', normalizedSymbol: '90x2', origin: UnitOrigin.AI, status: UnitStatus.ACTIVE },
+    ]);
+
+    const items = await service.listUnits();
+
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe('valid');
   });
 
   it('retorna conversão técnica com evidence parseado', async () => {
@@ -247,5 +343,20 @@ describe('MeasurementsService', () => {
     });
 
     expect(technicalRepo.saveEntity).not.toHaveBeenCalled();
+  });
+
+  it('resolve símbolo com quantidade grudada sem criar unidade duplicada', async () => {
+    unitsRepo.findByNormalizedOrAlias.mockResolvedValueOnce({
+      id: 'km-unit',
+      canonicalSymbol: 'km',
+      familyId: 'fam',
+      family: { id: 'fam', name: 'Comprimento' },
+    });
+
+    const resolved = await service.resolveUnit('50km', 'Transporte');
+
+    expect(resolved.unitId).toBe('km-unit');
+    expect(resolved.canonicalSymbol).toBe('km');
+    expect(resolved.normalizedSymbol).toBe('km');
   });
 });

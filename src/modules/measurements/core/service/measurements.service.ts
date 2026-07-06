@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { QueryFailedError } from 'typeorm';
@@ -188,7 +188,9 @@ export class MeasurementsService implements IMeasurementsApi {
   }
 
   listUnits(filters?: { search?: string; familyId?: string; status?: UnitStatus; origin?: UnitOrigin }): Promise<Unit[]> {
-    return this.units.list(filters ?? {});
+    return this.units.list(filters ?? {}).then((items) => items.filter(
+      (item) => this.normalization.isValidStoredSymbol(item.normalizedSymbol),
+    ));
   }
 
   listConversions(): Promise<UnitConversion[]> {
@@ -202,8 +204,16 @@ export class MeasurementsService implements IMeasurementsApi {
 
   async createOrUpdateUnit(payload: MeasurementUnitPayload, id?: string): Promise<Unit> {
     const normalizedSymbol = this.normalization.normalize(payload.canonicalSymbol);
+    if (!normalizedSymbol) {
+      throw new BadRequestException('Simbolo de unidade invalido');
+    }
+
     const canonicalSymbol = this.normalization.canonicalize(normalizedSymbol);
-    const aliases = [...new Set((payload.aliases ?? []).map((alias) => this.normalization.normalize(alias)).filter(Boolean))];
+    const aliases = [...new Set(
+      (payload.aliases ?? [])
+        .map((alias) => this.normalization.normalize(alias))
+        .filter((alias): alias is string => Boolean(alias) && alias !== normalizedSymbol),
+    )];
     const base: Partial<Unit> = {
       name: payload.name,
       canonicalSymbol,
@@ -234,6 +244,12 @@ export class MeasurementsService implements IMeasurementsApi {
       }
       throw error;
     }
+  }
+
+  async deleteUnit(id: string): Promise<void> {
+    const existing = await this.units.findById(id);
+    if (!existing) throw new NotFoundDomainException('Unit', id);
+    await this.units.deleteById(id);
   }
 
   async createOrUpdateMathematicalConversion(
