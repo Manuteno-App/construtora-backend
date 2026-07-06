@@ -1,4 +1,6 @@
+import { ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { QueryFailedError } from 'typeorm';
 import { MeasurementsService } from './measurements.service';
 import { UnitFamily } from '../../persistence/entity/unit-family.entity';
 
@@ -21,6 +23,7 @@ describe('MeasurementsService', () => {
 
   const unitsRepo = {
     findById: jest.fn(),
+    findByCanonicalSymbol: jest.fn(),
     findByNormalizedOrAlias: jest.fn(),
     list: jest.fn(),
     createEntity: jest.fn((data) => data),
@@ -128,6 +131,87 @@ describe('MeasurementsService', () => {
 
     expect(created.evidence).toEqual({ foo: 'bar' });
     expect(created.sourceUnit).toBe(sourceUnit);
+  });
+
+  it('reaproveita conversão técnica existente ao criar a mesma chave lógica', async () => {
+    technicalRepo.findExisting.mockResolvedValueOnce({ id: 'tech-existing' });
+    technicalRepo.updateEntity.mockResolvedValueOnce({
+      id: 'tech-existing',
+      serviceDescription: 'CBUQ',
+      normalizedServiceKey: 'cbuq',
+      sourceUnitId: 'u1',
+      targetUnitId: 'u2',
+      factor: 2.4,
+      ruleOrigin: 'USER',
+      status: 'PENDING',
+      evidenceJson: '{}',
+    });
+
+    const created = await service.createOrUpdateTechnicalConversion({
+      serviceDescription: 'CBUQ',
+      sourceUnitId: 'u1',
+      targetUnitId: 'u2',
+      factor: 2.4,
+    });
+
+    expect(technicalRepo.saveEntity).not.toHaveBeenCalled();
+    expect(technicalRepo.updateEntity).toHaveBeenCalledWith('tech-existing', expect.objectContaining({
+      normalizedServiceKey: 'cbuq',
+      sourceUnitId: 'u1',
+      targetUnitId: 'u2',
+    }));
+    expect(created.id).toBe('tech-existing');
+  });
+
+  it('resolve corrida de unique key buscando e atualizando a conversão criada em paralelo', async () => {
+    const duplicateError = Object.assign(
+      new QueryFailedError('INSERT', [], new Error('duplicate key value')),
+      { driverError: { code: '23505' } },
+    );
+    technicalRepo.findExisting
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'tech-race' });
+    technicalRepo.saveEntity.mockRejectedValueOnce(duplicateError);
+    technicalRepo.updateEntity.mockResolvedValueOnce({
+      id: 'tech-race',
+      serviceDescription: 'CBUQ',
+      normalizedServiceKey: 'cbuq',
+      sourceUnitId: 'u1',
+      targetUnitId: 'u2',
+      factor: 2.35,
+      ruleOrigin: 'AI',
+      status: 'PENDING',
+      evidenceJson: '{}',
+    });
+
+    const created = await service.createOrUpdateTechnicalConversion({
+      serviceDescription: 'CBUQ',
+      sourceUnitId: 'u1',
+      targetUnitId: 'u2',
+      factor: 2.35,
+      ruleOrigin: 'AI' as any,
+      status: 'PENDING' as any,
+    });
+
+    expect(technicalRepo.updateEntity).toHaveBeenCalledWith('tech-race', expect.objectContaining({
+      normalizedServiceKey: 'cbuq',
+      sourceUnitId: 'u1',
+      targetUnitId: 'u2',
+    }));
+    expect(created.id).toBe('tech-race');
+  });
+
+  it('bloqueia atualização quando já existe outra conversão com a mesma chave lógica', async () => {
+    technicalRepo.findExisting.mockResolvedValueOnce({ id: 'other-tech' });
+
+    await expect(
+      service.createOrUpdateTechnicalConversion({
+        serviceDescription: 'CBUQ',
+        sourceUnitId: 'u1',
+        targetUnitId: 'u2',
+        factor: 2.35,
+      }, 'tech-1'),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('não sugere conversão técnica com amostra fraca', async () => {

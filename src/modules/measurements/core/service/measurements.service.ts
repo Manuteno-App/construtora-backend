@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { QueryFailedError } from 'typeorm';
+import { NotFoundDomainException } from '../../../../common/exception/not-found-domain.exception';
 import {
   TechnicalUnitConversion,
   TechnicalUnitConversionStatus,
@@ -278,23 +279,56 @@ export class MeasurementsService implements IMeasurementsApi {
       evidenceJson: JSON.stringify(payload.evidence ?? {}),
     };
 
+    const existing = await this.technicalConversions.findExisting(
+      normalizedServiceKey,
+      payload.sourceUnitId,
+      payload.targetUnitId,
+    );
+
     if (id) {
-      return this.toTechnicalConversionView((await this.technicalConversions.updateEntity(id, base)) as TechnicalUnitConversion);
+      if (existing && existing.id !== id) {
+        throw new ConflictException('Já existe uma conversão técnica para este serviço e par de unidades');
+      }
+
+      const updated = await this.technicalConversions.updateEntity(id, base);
+      if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', id);
+      return this.toTechnicalConversionView(updated);
     }
 
-    const created = await this.technicalConversions.saveEntity(
-      this.technicalConversions.createEntity(base),
-    );
-    return this.toTechnicalConversionView(created);
+    if (existing) {
+      const updated = await this.technicalConversions.updateEntity(existing.id, base);
+      if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', existing.id);
+      return this.toTechnicalConversionView(updated);
+    }
+
+    try {
+      const created = await this.technicalConversions.saveEntity(
+        this.technicalConversions.createEntity(base),
+      );
+      return this.toTechnicalConversionView(created);
+    } catch (error) {
+      if (!this.isUniqueViolation(error)) throw error;
+
+      const concurrent = await this.technicalConversions.findExisting(
+        normalizedServiceKey,
+        payload.sourceUnitId,
+        payload.targetUnitId,
+      );
+      if (!concurrent) throw error;
+
+      const updated = await this.technicalConversions.updateEntity(concurrent.id, base);
+      if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', concurrent.id);
+      return this.toTechnicalConversionView(updated);
+    }
   }
 
   async updateTechnicalConversionStatus(
     id: string,
     status: TechnicalUnitConversionStatus,
   ): Promise<TechnicalUnitConversionView> {
-    return this.toTechnicalConversionView(
-      (await this.technicalConversions.updateEntity(id, { status })) as TechnicalUnitConversion,
-    );
+    const updated = await this.technicalConversions.updateEntity(id, { status });
+    if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', id);
+    return this.toTechnicalConversionView(updated);
   }
 
   async recordServiceObservation(params: {
