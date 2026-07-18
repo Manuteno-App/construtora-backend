@@ -42,9 +42,10 @@ export class EntityOrchestrationService {
 
   private normalizeCategory(value?: string): string {
     const category = value?.trim().replace(/\s+/g, ' ') ?? '';
-    return !category || /^(?:0+|(?:sub)?total|soma)$/i.test(category) || /^[A-Z]{0,3}[-.]?\d+(?:[.-]\d+)*$/i.test(category)
-      ? 'SEM_CATEGORIA'
-      : category;
+    if (!category || /^(?:null|undefined|0+|(?:sub)?total|soma)$/i.test(category) || /^[A-Z]{0,3}[-.]?\d+(?:[.-]\d+)*$/i.test(category)) {
+      return 'SEM_CATEGORIA';
+    }
+    return category.replace(/^\d+(?:\.0)?\.?\s+/, '').trim() || 'SEM_CATEGORIA';
   }
 
   private normalizeKeyPart(value?: string): string {
@@ -140,7 +141,7 @@ export class EntityOrchestrationService {
 
         const normalizedCode = this.normalizeKeyPart(service.codigo);
         const unitKey = resolvedUnit.normalizedSymbol || this.normalizeKeyPart(service.unidade) || 'sem-unidade';
-        const fallbackKey = [service.trecho, category, this.measurements.normalizeServiceKey(service.descricao)]
+        const fallbackKey = [category, this.measurements.normalizeServiceKey(service.descricao)]
           .map((part) => this.normalizeKeyPart(part))
           .filter(Boolean)
           .join('::');
@@ -148,7 +149,6 @@ export class EntityOrchestrationService {
         const row = {
           atestadoId,
           obraId: savedObraId,
-          trecho: service.trecho,
           categoria: category,
           codigo: service.codigo?.trim() || undefined,
           descricao: service.descricao.trim(),

@@ -32,9 +32,6 @@ export class ServicoExecutado {
   @JoinColumn({ name: 'obra_id' })
   obra?: Obra;
 
-  @Column({ nullable: true, type: 'text' })
-  trecho?: string;
-
   @Column({ nullable: true })
   categoria?: string;
 

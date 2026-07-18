@@ -43,8 +43,13 @@ export interface OcrResult {
     unidade?: string;
     quantidadeRaw?: string;
     categoria?: string;
-    trecho?: string;
     baixaConfianca?: boolean;
+  }>;
+  /** Per-page Vision payload retained only for local development diagnostics. */
+  visionDebug?: Array<{
+    pageNumber: number;
+    response: string;
+    rawServiceRows: NonNullable<OcrResult['rawServiceRows']>;
   }>;
 }
 
@@ -132,13 +137,18 @@ export class VisionService implements OnModuleInit {
       // Stream: render one page → send to GPT → discard image → next page.
       // Avoids holding all pages in memory simultaneously (100-page PDF = 400 MB+).
       const pageTexts: string[] = [];
+      const pageRows: NonNullable<OcrResult['rawServiceRows']> = [];
+      const visionDebug: NonNullable<OcrResult['visionDebug']> = [];
       const entries = await this.renderPagesFiltered(buffer);
       if (entries.length === 0) return empty;
 
       for (const { pageNumber, base64 } of entries) {
         const text = await this.callSinglePageVision(base64, pageNumber);
         pageTexts.push(text);
-        this.logger.debug(`Vision page ${pageNumber}/${entries.length}: ${text.length} chars`);
+        const rows = this.parseTableBlock(text) ?? [];
+        pageRows.push(...rows);
+        visionDebug.push({ pageNumber, response: text, rawServiceRows: rows });
+        this.logger.log('Vision page ' + pageNumber + '/' + entries.length + ': ' + rows.length + ' service rows');
       }
 
       let visionText: string;
@@ -151,7 +161,7 @@ export class VisionService implements OnModuleInit {
 
       // Extract structured blocks before splitting into pages
       const keyValuePairs = this.parseHeaderBlock(visionText);
-      const rawServiceRows = this.parseTableBlock(visionText);
+      const rawServiceRows = pageRows.length ? pageRows : this.parseTableBlock(visionText);
       const cleanText = this.removeStructuredBlocks(visionText);
       const pages = this.splitIntoPages(cleanText);
 
@@ -162,6 +172,7 @@ export class VisionService implements OnModuleInit {
         keyValuePairs,
         avgConfidence: 100,
         rawServiceRows,
+        visionDebug,
       };
     } catch (err) {
       this.logger.error('Vision analysis failed', err);
@@ -190,15 +201,20 @@ export class VisionService implements OnModuleInit {
       if (pageEntries.length === 0) return empty;
 
       const pageTexts: string[] = [];
+      const pageRows: NonNullable<OcrResult['rawServiceRows']> = [];
+      const visionDebug: NonNullable<OcrResult['visionDebug']> = [];
       for (const { pageNumber, base64 } of pageEntries) {
         const text = await this.callSinglePageVision(base64, pageNumber);
         pageTexts.push(text);
-        this.logger.debug(`Selective Vision page ${pageNumber}: ${text.length} chars`);
+        const rows = this.parseTableBlock(text) ?? [];
+        pageRows.push(...rows);
+        visionDebug.push({ pageNumber, response: text, rawServiceRows: rows });
+        this.logger.log('Selective Vision page ' + pageNumber + ': ' + rows.length + ' service rows');
       }
 
       const visionText = this.mergePageVisionResults(pageTexts);
       const keyValuePairs = this.parseHeaderBlock(visionText);
-      const rawServiceRows = this.parseTableBlock(visionText);
+      const rawServiceRows = pageRows.length ? pageRows : this.parseTableBlock(visionText);
       const cleanText = this.removeStructuredBlocks(visionText);
       const pages = this.splitIntoPages(cleanText);
 
@@ -209,6 +225,7 @@ export class VisionService implements OnModuleInit {
         keyValuePairs,
         avgConfidence: 100,
         rawServiceRows,
+        visionDebug,
       };
     } catch (err) {
       this.logger.error('Selective Vision analysis failed', err);
@@ -451,17 +468,17 @@ export class VisionService implements OnModuleInit {
           content:
             'Extract Brazilian construction certificate data. Return ONLY two JSON blocks.\n' +
             '===HEADER_JSON_START===\n{ "obra":"string|null", "contratante":"string|null", "contratada":"string|null", "cnpj":"string|null", "cnpj_contratada":"string|null", "contrato":"string|null", "cidade":"string|null", "estado":"string|null", "local":"string|null", "data_atestado":"DD/MM/YYYY|null", "data_inicio":"DD/MM/YYYY|null", "data_fim":"DD/MM/YYYY|null", "engenheiro":"string|null", "titulo":"string|null" }\n===HEADER_JSON_END===\n' +
-            '===ITEMS_JSON_START===\n{ "secoes":[{ "secao":"string|null", "categorias":[{ "categoria":"string|null", "itens":[{ "codigo":"string|null", "descricao":"string", "unidade":"string|null", "quantidade_raw":"string|null", "baixa_confianca":false }] }] }] }\n===ITEMS_JSON_END===\n' +
-            'Keep the table hierarchy. A category may start with 2.0 followed by its name. Keep item codes such as 2.4 and 20.1. Direct section items may have categoria null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
+            '===ITEMS_JSON_START===\n{ "itens":[{ "codigo":"string|null", "descricao":"string", "categoria":"string|null", "unidade":"string|null", "quantidade_raw":"string|null", "baixa_confianca":false }] }\n===ITEMS_JSON_END===\n' +
+            'Return one flat item for every service row visible on this page. Repeat the textual category on EVERY item in that category. Remove a numeric prefix from categories: "2.0 POSTO" must be "POSTO". Never use a numeric value, 0, 00, total, or section number as categoria. Keep item codes such as 2.4 and 20.1. If no textual category is visible, set categoria to null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
         },
         {
           role: 'user',
           content: [
-            { type: 'text' as const, text: `Página ${pageNum} do documento:` },
+            { type: 'text' as const, text: 'Page ' + pageNum + ' of the document:' },
             {
               type: 'image_url' as const,
               image_url: {
-                url: `data:image/png;base64,${base64Image}`,
+                url: 'data:image/png;base64,' + base64Image,
                 detail: 'high' as const,
               },
             },
@@ -473,53 +490,56 @@ export class VisionService implements OnModuleInit {
 
     const content = response.choices[0]?.message?.content ?? '';
     if (this.isRefusal(content)) {
-      this.logger.warn(`GPT Vision refused page ${pageNum} — skipping`);
-      return `---PAGE ${pageNum} END---`;
+      this.logger.warn('GPT Vision refused page ' + pageNum + ' — skipping');
+      return '---PAGE ' + pageNum + ' END---';
     }
     return content;
   }
 
   private mergePageVisionResults(pageTexts: string[]): string {
     let mergedHeaderJson = '';
-    const secoes: unknown[] = [];
+    const itens: unknown[] = [];
     const transcriptions: string[] = [];
+
     for (const text of pageTexts) {
       if (!mergedHeaderJson) {
-        const header = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
-        if (header && header[1].trim() && header[1].trim() !== '{}') mergedHeaderJson = header[1].trim();
+        const header = this.parseHeaderBlock(text);
+        if (Object.keys(header).length > 0) mergedHeaderJson = JSON.stringify(header);
       }
-      const items = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
-      if (items) {
-        try {
-          const parsed = JSON.parse(items[1]) as {
-            secoes?: unknown[];
-            categorias?: unknown[];
-            itens?: unknown[];
-          };
-          if (Array.isArray(parsed.secoes)) {
-            secoes.push(...parsed.secoes);
-          } else if (Array.isArray(parsed.categorias)) {
-            secoes.push({ secao: null, categorias: parsed.categorias });
-          } else if (Array.isArray(parsed.itens)) {
-            // Tolerate a valid but flattened page response rather than dropping
-            // all services when the model omits the outer hierarchy.
-            secoes.push({ secao: null, categorias: [{ categoria: null, itens: parsed.itens }] });
-          }
-        } catch { this.logger.warn('Failed to parse Vision hierarchy JSON'); }
+
+      try {
+        const marker = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
+        const parsed = marker
+          ? JSON.parse(marker[1]) as Record<string, unknown>
+          : this.findJsonObject(text, (value) => Array.isArray(value.itens) || Array.isArray(value.items));
+        const pageItems = parsed?.itens ?? parsed?.items;
+        if (Array.isArray(pageItems)) itens.push(...pageItems);
+      } catch {
+        this.logger.warn('Failed to parse Vision items JSON');
       }
-      const plain = text.replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '').replace(/===ITEMS_JSON_START===[\s\S]*?===ITEMS_JSON_END===/gi, '').trim();
+
+      const plain = text
+        .replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '')
+        .replace(/===ITEMS_JSON_START===[\s\S]*?===ITEMS_JSON_END===/gi, '')
+        .trim();
       if (plain) transcriptions.push(plain);
     }
-    const headerBlock = mergedHeaderJson ? '===HEADER_JSON_START===\n' + mergedHeaderJson + '\n===HEADER_JSON_END===' : '';
-    const itemsBlock = '===ITEMS_JSON_START===\n' + JSON.stringify({ secoes }) + '\n===ITEMS_JSON_END===';
+
+    const headerBlock = mergedHeaderJson
+      ? '===HEADER_JSON_START===\n' + mergedHeaderJson + '\n===HEADER_JSON_END==='
+      : '';
+    const itemsBlock = '===ITEMS_JSON_START===\n' + JSON.stringify({ itens }) + '\n===ITEMS_JSON_END===';
     return [headerBlock, itemsBlock, transcriptions.join('\n\n')].filter(Boolean).join('\n\n');
   }
 
   private parseHeaderBlock(text: string): Record<string, string> {
     const match = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
-    if (!match) return {};
     try {
-      const parsed = JSON.parse(match[1]) as Record<string, unknown>;
+      const parsed = match
+        ? JSON.parse(match[1]) as Record<string, unknown>
+        : this.findJsonObject(text, (value) => 'obra' in value || 'titulo' in value || 'contratante' in value);
+      if (!parsed) return {};
+
       const result: Record<string, string> = {};
       for (const [k, v] of Object.entries(parsed)) {
         if (v && typeof v === 'string' && v.trim()) result[k] = v.trim();
@@ -532,55 +552,65 @@ export class VisionService implements OnModuleInit {
   }
 
   private parseTableBlock(text: string): OcrResult['rawServiceRows'] {
-    const match = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
-    if (!match) return undefined;
     try {
-      const parsed = JSON.parse(match[1]) as {
-        secoes?: Array<Record<string, unknown>>;
-        categorias?: Array<Record<string, unknown>>;
-        itens?: Array<Record<string, unknown>>;
-      };
-      const sections = Array.isArray(parsed.secoes)
-        ? parsed.secoes
-        : Array.isArray(parsed.categorias)
-          ? [{ secao: null, categorias: parsed.categorias }]
-          : Array.isArray(parsed.itens)
-            ? [{ secao: null, categorias: [{ categoria: null, itens: parsed.itens }] }]
-            : [];
-      if (!sections.length) return undefined;
+      const match = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
+      const parsed = match
+        ? JSON.parse(match[1]) as Record<string, unknown>
+        : this.findJsonObject(text, (value) => Array.isArray(value.itens) || Array.isArray(value.items));
+      if (!parsed) return undefined;
 
+      const items = this.arrayOfRecords(parsed.itens ?? parsed.items);
       const rows: NonNullable<OcrResult['rawServiceRows']> = [];
-      let currentSection: string | undefined;
-      let currentCategory: string | undefined;
-      for (const section of sections) {
-        const sectionName = typeof section.secao === 'string' && section.secao.trim() ? section.secao.trim() : currentSection;
-        if (sectionName) currentSection = sectionName;
-        const categories = Array.isArray(section.categorias) ? section.categorias as Array<Record<string, unknown>> : [];
-        for (const group of categories) {
-          const category = typeof group.categoria === 'string' && group.categoria.trim() ? group.categoria.trim() : currentCategory;
-          if (category) currentCategory = category;
-          const items = Array.isArray(group.itens) ? group.itens as Array<Record<string, unknown>> : [];
-          for (const item of items) {
-            const descricao = typeof item.descricao === 'string' ? item.descricao.trim() : '';
-            if (!descricao) continue;
-            rows.push({
-              trecho: currentSection,
-              categoria: category,
-              codigo: typeof item.codigo === 'string' ? item.codigo.trim() || undefined : undefined,
-              descricao,
-              unidade: typeof item.unidade === 'string' ? item.unidade.trim() || undefined : undefined,
-              quantidadeRaw: typeof item.quantidade_raw === 'string' ? item.quantidade_raw.trim() || undefined : undefined,
-              baixaConfianca: item.baixa_confianca === true,
-            });
-          }
-        }
+
+      for (const item of items) {
+        const descricao = this.readText(item.descricao ?? item.description);
+        if (!descricao) continue;
+        rows.push({
+          categoria: this.readText(item.categoria ?? item.category),
+          codigo: this.readText(item.codigo ?? item.code),
+          descricao,
+          unidade: this.readText(item.unidade ?? item.unit),
+          quantidadeRaw: this.readText(item.quantidade_raw ?? item.quantidadeRaw ?? item.quantidade ?? item.quantity),
+          baixaConfianca: item.baixa_confianca === true || item.baixaConfianca === true || item.low_confidence === true,
+        });
       }
-      if (!rows.length) this.logger.warn('Vision hierarchy contained no valid service rows');
+
+      if (!rows.length) this.logger.warn('Vision JSON parsed successfully but contained no valid service rows');
       return rows.length ? rows : undefined;
-    } catch {
-      this.logger.warn('Failed to parse Vision hierarchy JSON');
+    } catch (err) {
+      this.logger.warn('Failed to parse Vision items JSON', err);
       return undefined;
     }
+  }
+
+  /** Accepts valid JSON fenced by Markdown when the model omits our markers. */
+  private findJsonObject(
+    text: string,
+    predicate: (value: Record<string, unknown>) => boolean,
+  ): Record<string, unknown> | undefined {
+    const fence = String.fromCharCode(96).repeat(3);
+    const candidates = [...text.matchAll(new RegExp(fence + '(?:json)?\\s*([\\s\\S]*?)' + fence, 'gi'))]
+      .map((match) => match[1]);
+
+    for (const candidate of candidates) {
+      try {
+        const value = JSON.parse(candidate.trim()) as unknown;
+        if (value && typeof value === 'object' && !Array.isArray(value) && predicate(value as Record<string, unknown>)) {
+          return value as Record<string, unknown>;
+        }
+      } catch {
+        // Try the next fenced block.
+      }
+    }
+    return undefined;
+  }
+
+  private arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
+    return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object') : [];
+  }
+
+  private readText(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
   }
 
   /** Minimal CSV line parser that handles double-quoted fields with commas. */

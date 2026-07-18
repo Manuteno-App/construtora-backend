@@ -1,12 +1,14 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Job, Queue } from 'bullmq';
 import { AtestadoStatus } from '../../documents/persistence/entity/atestado.entity';
 import { DOCUMENTS_API, IDocumentsApi } from '../../documents/public-api/interface/documents-api.interface';
 import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../../infrastructure/queue/queue.module';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { ServicoItem, TableExtractorService } from '../core/service/table-extractor.service';
-import { VisionService } from '../core/service/vision.service';
+import { OcrResult, VisionService } from '../core/service/vision.service';
 import { ChunkRepository, CreateChunkData } from '../persistence/repository/chunk.repository';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -96,6 +98,7 @@ export class IngestionProcessor extends WorkerHost {
 
       let keyValuePairs: Record<string, string> = {};
       let tabelaServicos: ServicoItem[] = [];
+      let visionDebug: OcrResult['visionDebug'];
 
       if (allSparse) {
         this.logger.log(
@@ -106,34 +109,28 @@ export class IngestionProcessor extends WorkerHost {
         pages = ocrResult.pages;
         keyValuePairs = ocrResult.keyValuePairs;
         tabelaServicos = this.tableExtractor.extractBest(ocrResult);
+        visionDebug = ocrResult.visionDebug;
         fullText = this.preProcess(fullText);
       } else if (hasSparsePages) {
         this.logger.log(
-          `Using Vision OCR (hybrid: ${sparsePageNums.length}/${pages.length} pages) for ${atestadoId}`,
+          'Using Vision OCR for all pages of mixed document ' + atestadoId,
         );
-        const ocrResult = await this.vision.analyzeSelectivePages(buffer, sparsePageNums);
-        const ocrPageMap = new Map(ocrResult.pages.map((p) => [p.pageNumber, p.text]));
-        const mergedPages = pages.map((p) => ({
-          pageNumber: p.pageNumber,
-          text: ocrPageMap.has(p.pageNumber) ? (ocrPageMap.get(p.pageNumber) ?? '') : p.text,
-        }));
-        const mergedFullText = mergedPages.map((p) => p.text).join('\n\n');
-        pages = mergedPages;
-        keyValuePairs =
-          Object.keys(ocrResult.keyValuePairs).length > 0
-            ? ocrResult.keyValuePairs
-            : this.extractHeaderHints(mergedFullText);
-        tabelaServicos =
-          ocrResult.rawServiceRows?.length
-            ? this.tableExtractor.extractBest(ocrResult)
-            : this.tableExtractor.extract(mergedFullText);
-        fullText = this.preProcess(mergedFullText);
+        // Combining Vision rows from only sparse pages with native rows drops
+        // all services from the other pages. Use one source for the whole table.
+        const ocrResult = await this.vision.analyze(buffer);
+        fullText = ocrResult.text;
+        pages = ocrResult.pages;
+        keyValuePairs = ocrResult.keyValuePairs;
+        tabelaServicos = this.tableExtractor.extractBest(ocrResult);
+        visionDebug = ocrResult.visionDebug;
+        fullText = this.preProcess(fullText);
       } else {
         fullText = this.preProcess(fullText);
         tabelaServicos = this.tableExtractor.extract(fullText);
         keyValuePairs = this.extractHeaderHints(fullText);
       }
 
+      await this.writeVisionDebug(atestadoId, atestado.originalFilename, keyValuePairs, tabelaServicos, visionDebug);
 
       const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
       const savedChunks = await this.chunkRepo.saveMany(
@@ -244,6 +241,32 @@ export class IngestionProcessor extends WorkerHost {
    * Runs the HEADER_PATTERNS against the first 3000 chars of the raw text
    * and returns matched key-value hints to pass to the extraction LLM.
    */
+  private async writeVisionDebug(
+    atestadoId: string,
+    originalFilename: string,
+    keyValuePairs: Record<string, string>,
+    tabelaServicos: ServicoItem[],
+    visionDebug?: OcrResult['visionDebug'],
+  ): Promise<void> {
+    if (!visionDebug?.length) return;
+    try {
+      const directory = join(process.cwd(), 'debug', 'vision-extractions');
+      const file = join(directory, atestadoId + '.json');
+      await mkdir(directory, { recursive: true });
+      await writeFile(file, JSON.stringify({
+        atestadoId,
+        originalFilename,
+        generatedAt: new Date().toISOString(),
+        keyValuePairs,
+        tabelaServicos,
+        pages: visionDebug,
+      }, null, 2), 'utf8');
+      this.logger.log('Vision debug JSON written: ' + file);
+    } catch (err) {
+      this.logger.warn('Could not write Vision debug JSON: ' + (err as Error).message);
+    }
+  }
+
   private extractHeaderHints(text: string): Record<string, string> {
     const sample = text.slice(0, 3000);
     const hints: Record<string, string> = {};

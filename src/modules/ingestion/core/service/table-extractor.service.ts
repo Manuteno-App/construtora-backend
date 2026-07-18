@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { OcrResult, TextractTable } from './vision.service';
 
 export interface ServicoItem {
-  trecho?: string;
   categoria?: string;
   codigo?: string;
   descricao: string;
@@ -56,7 +55,6 @@ export class TableExtractorService {
   /** Convert rawServiceRows (from Vision CSV block) into ServicoItem[]. */
   extractFromVisionRows(rows: NonNullable<OcrResult['rawServiceRows']>): ServicoItem[] {
     return rows.map((r) => ({
-      trecho: r.trecho,
       categoria: r.categoria,
       codigo: r.codigo || undefined,
       descricao: r.descricao,
@@ -182,7 +180,6 @@ export class TableExtractorService {
     const lines = text.split('\n');
     const results: ServicoItem[] = [];
     let currentCategory = 'GERAL';
-    let currentTrecho: string | undefined;
 
     for (const raw of lines) {
       const line = raw.trim();
@@ -190,12 +187,6 @@ export class TableExtractorService {
 
       if (CATEGORY_HEADER_RE.test(line) && line.length > 4 && isValidCategoryHeader(line)) {
         currentCategory = line;
-        currentTrecho = undefined;
-        continue;
-      }
-
-      if (/trecho:/i.test(line) || /^\s*[A-Z]{2}-\d{3}/.test(line)) {
-        currentTrecho = line;
         continue;
       }
 
@@ -203,7 +194,6 @@ export class TableExtractorService {
       if (match) {
         const [, codigo, descricao, unidade, quantidadeRaw] = match;
         results.push({
-          trecho: currentTrecho,
           categoria: currentCategory,
           codigo,
           descricao: descricao.trim(),

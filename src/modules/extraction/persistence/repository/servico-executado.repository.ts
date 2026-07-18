@@ -7,7 +7,6 @@ import { ServicoExecutado } from '../entity/servico-executado.entity';
 export interface ServicoExecutadoRow {
   atestadoId: string;
   obraId?: string;
-  trecho?: string;
   categoria?: string;
   codigo?: string;
   descricao: string;
@@ -60,7 +59,6 @@ export interface ServiceContextResult {
   unidade: string | null;
   unitId?: string | null;
   categoria: string | null;
-  trecho: string | null;
 }
 
 @Injectable()
@@ -72,8 +70,9 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
   async findByAtestadoId(atestadoId: string, categoria?: string): Promise<ServicoExecutado[]> {
     const qb = this.createQueryBuilder('s')
       .where('s.atestadoId = :atestadoId', { atestadoId })
-      .orderBy('s.categoria', 'ASC')
-      .addOrderBy('s.codigo', 'ASC');
+      .orderBy('CAST(split_part(s.codigo, \'.\', 1) AS INTEGER)', 'ASC')
+      .addOrderBy('CAST(split_part(s.codigo, \'.\', 2) AS INTEGER)', 'ASC')
+      .addOrderBy('s.categoria', 'ASC');
 
     if (categoria) {
       qb.andWhere('UPPER(s.categoria) = UPPER(:categoria)', { categoria });
@@ -213,7 +212,6 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
          s.unidade,
          s.unit_id                                            AS "unitId",
          s.categoria,
-         s.trecho
        FROM servicos_executados s
        LEFT JOIN atestados a ON a.id = s.atestado_id
        WHERE ${conditions}
