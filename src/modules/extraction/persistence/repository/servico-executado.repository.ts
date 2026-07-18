@@ -70,8 +70,9 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
   async findByAtestadoId(atestadoId: string, categoria?: string): Promise<ServicoExecutado[]> {
     const qb = this.createQueryBuilder('s')
       .where('s.atestadoId = :atestadoId', { atestadoId })
-      .orderBy('CAST(split_part(s.codigo, \'.\', 1) AS INTEGER)', 'ASC')
-      .addOrderBy('CAST(split_part(s.codigo, \'.\', 2) AS INTEGER)', 'ASC')
+      .orderBy("CASE WHEN s.codigo ~ '^[0-9]+([.][0-9]+)*$' THEN split_part(s.codigo, '.', 1)::integer END", 'ASC', 'NULLS LAST')
+      .addOrderBy("CASE WHEN s.codigo ~ '^[0-9]+[.][0-9]+([.][0-9]+)*$' THEN split_part(s.codigo, '.', 2)::integer END", 'ASC', 'NULLS LAST')
+      .addOrderBy('s.codigo', 'ASC', 'NULLS LAST')
       .addOrderBy('s.categoria', 'ASC');
 
     if (categoria) {

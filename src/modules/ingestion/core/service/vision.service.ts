@@ -475,7 +475,7 @@ export class VisionService implements OnModuleInit {
             '===ITEMS_JSON_START===\n{ "itens":[{ "codigo":"string|null", "descricao":"string", "categoria":"string|null", "unidade":"string|null", "quantidade_raw":"string|null", "baixa_confianca":false }] }\n===ITEMS_JSON_END===\n' +
             'For the header, capture objeto as the name or description of the project/work. A document title such as Declaracao de Conclusao de Obras is never the object. Explicitly capture the document end or completion date as data_fim, including labels such as data de conclusao, termino, fim dos servicos, or prazo final. ' +
             'A code N.0 without both unit and quantity is a category header: do not return it as an item and copy its text as categoria to every following item until the next such header. A code N.0 with both unit and quantity is a real item and must be returned. ' +
-            'Return one flat item for every service row visible on this page. Repeat the textual category on EVERY item in that category. Remove a numeric prefix from categories: "2.0 POSTO" must be "POSTO". Never use a numeric value, 0, 00, total, or section number as categoria. Keep item codes such as 2.4 and 20.1. If no textual category is visible, set categoria to null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
+            'Return one flat item for every service row visible on this page. Never omit rows and never use comments, placeholders, ellipses, or phrases such as "additional items would follow". Repeat the textual category on EVERY item in that category. Remove a numeric prefix from categories: "2.0 POSTO" must be "POSTO". Never use a numeric value, 0, 00, total, or section number as categoria. Keep item codes such as 2.4 and 20.1. If no textual category is visible, set categoria to null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
         },
         {
           role: 'user',
@@ -615,13 +615,43 @@ export class VisionService implements OnModuleInit {
     try {
       parsed = JSON.parse(value);
     } catch {
-      const repaired = value.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+      const withoutComments = this.stripJsonLineComments(value);
+      const repaired = withoutComments.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
       parsed = JSON.parse(repaired);
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('Vision JSON value is not an object');
     }
     return parsed as Record<string, unknown>;
+  }
+
+  /** Removes // comments outside JSON string values emitted by a model. */
+  private stripJsonLineComments(value: string): string {
+    let result = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < value.length; i++) {
+      const char = value[i];
+      if (inString) {
+        result += char;
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        result += char;
+      } else if (char === '/' && value[i + 1] === '/') {
+        while (i < value.length && value[i] !== '\n') i++;
+        if (i < value.length) result += '\n';
+      } else {
+        result += char;
+      }
+    }
+    return result;
   }
 
   /** Accepts valid JSON fenced by Markdown when the model omits our markers. */
