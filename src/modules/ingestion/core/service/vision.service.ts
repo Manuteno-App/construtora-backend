@@ -511,7 +511,7 @@ export class VisionService implements OnModuleInit {
       try {
         const marker = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
         const parsed = marker
-          ? JSON.parse(marker[1]) as Record<string, unknown>
+          ? this.parseJsonObject(marker[1])
           : this.findJsonObject(text, (value) => Array.isArray(value.itens) || Array.isArray(value.items));
         const pageItems = parsed?.itens ?? parsed?.items;
         if (Array.isArray(pageItems)) itens.push(...pageItems);
@@ -537,7 +537,7 @@ export class VisionService implements OnModuleInit {
     const match = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
     try {
       const parsed = match
-        ? JSON.parse(match[1]) as Record<string, unknown>
+        ? this.parseJsonObject(match[1])
         : this.findJsonObject(text, (value) => 'obra' in value || 'titulo' in value || 'contratante' in value);
       if (!parsed) return {};
 
@@ -556,7 +556,7 @@ export class VisionService implements OnModuleInit {
     try {
       const match = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
       const parsed = match
-        ? JSON.parse(match[1]) as Record<string, unknown>
+        ? this.parseJsonObject(match[1])
         : this.findJsonObject(text, (value) => Array.isArray(value.itens) || Array.isArray(value.items));
       if (!parsed) return undefined;
 
@@ -584,6 +584,24 @@ export class VisionService implements OnModuleInit {
     }
   }
 
+  /**
+   * Repairs invalid backslashes produced by OCR text (for example, c\vidro)
+   * before parsing; valid JSON escapes remain untouched.
+   */
+  private parseJsonObject(value: string): Record<string, unknown> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      const repaired = value.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+      parsed = JSON.parse(repaired);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Vision JSON value is not an object');
+    }
+    return parsed as Record<string, unknown>;
+  }
+
   /** Accepts valid JSON fenced by Markdown when the model omits our markers. */
   private findJsonObject(
     text: string,
@@ -595,7 +613,7 @@ export class VisionService implements OnModuleInit {
 
     for (const candidate of candidates) {
       try {
-        const value = JSON.parse(candidate.trim()) as unknown;
+        const value = this.parseJsonObject(candidate.trim());
         if (value && typeof value === 'object' && !Array.isArray(value) && predicate(value as Record<string, unknown>)) {
           return value as Record<string, unknown>;
         }

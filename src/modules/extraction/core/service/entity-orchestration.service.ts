@@ -96,22 +96,28 @@ export class EntityOrchestrationService {
       savedObraId = obra.id;
 
       if (entities.empresas?.length) {
+        let contractEmpresaId: string | undefined;
         for (const emp of entities.empresas) {
           const empresa = await this.empresaRepo.findOrCreate({
             nome: emp.nome,
             cnpj: emp.cnpj,
             tipo: (emp.tipo as EmpresaTipo) ?? undefined,
           });
-
-          if (entities.contrato) {
-            await this.contratoRepo.upsertByObraAndEmpresa({
-              obraId: obra.id,
-              empresaId: empresa.id,
-              numero: entities.contrato.numero,
-              data: this.parseDate(entities.contrato.data),
-              valor: entities.contrato.valor,
-            });
+          // The contract belongs to the contractor. If it is absent, use the
+          // only/first identified company rather than creating one contract per company.
+          if (!contractEmpresaId || emp.tipo === EmpresaTipo.CONTRATADA) {
+            contractEmpresaId = empresa.id;
           }
+        }
+
+        if (entities.contrato && contractEmpresaId) {
+          await this.contratoRepo.upsertByObraAndEmpresa({
+            obraId: obra.id,
+            empresaId: contractEmpresaId,
+            numero: entities.contrato.numero,
+            data: this.parseDate(entities.contrato.data),
+            valor: entities.contrato.valor,
+          });
         }
       }
     }
