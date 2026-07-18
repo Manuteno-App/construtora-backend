@@ -498,14 +498,18 @@ export class VisionService implements OnModuleInit {
   }
 
   private mergePageVisionResults(pageTexts: string[]): string {
-    let mergedHeaderJson = '';
+    const mergedHeader: Record<string, string> = {};
     const itens: unknown[] = [];
     const transcriptions: string[] = [];
 
     for (const text of pageTexts) {
-      if (!mergedHeaderJson) {
-        const header = this.parseHeaderBlock(text);
-        if (Object.keys(header).length > 0) mergedHeaderJson = JSON.stringify(header);
+      const header = this.parseHeaderBlock(text);
+      for (const [key, value] of Object.entries(header)) {
+        // The attestation date is commonly printed on the final certification page.
+        // Keep other first-page metadata, but allow a later concrete attestation date.
+        if (!mergedHeader[key] || (key === 'data_atestado' && this.isDateValue(value))) {
+          mergedHeader[key] = value;
+        }
       }
 
       try {
@@ -526,8 +530,8 @@ export class VisionService implements OnModuleInit {
       if (plain) transcriptions.push(plain);
     }
 
-    const headerBlock = mergedHeaderJson
-      ? '===HEADER_JSON_START===\n' + mergedHeaderJson + '\n===HEADER_JSON_END==='
+    const headerBlock = Object.keys(mergedHeader).length
+      ? '===HEADER_JSON_START===\n' + JSON.stringify(mergedHeader) + '\n===HEADER_JSON_END==='
       : '';
     const itemsBlock = '===ITEMS_JSON_START===\n' + JSON.stringify({ itens }) + '\n===ITEMS_JSON_END===';
     return [headerBlock, itemsBlock, transcriptions.join('\n\n')].filter(Boolean).join('\n\n');
@@ -566,12 +570,18 @@ export class VisionService implements OnModuleInit {
       for (const item of items) {
         const descricao = this.readText(item.descricao ?? item.description);
         if (!descricao) continue;
+        const codigo = this.readText(item.codigo ?? item.code);
+        const categoria = this.readText(item.categoria ?? item.category);
+        const unidade = this.readText(item.unidade ?? item.unit);
+        const quantidadeRaw = this.readText(item.quantidade_raw ?? item.quantidadeRaw ?? item.quantidade ?? item.quantity);
+        // A numbered category header is context, never a service line.
+        if (!categoria && !unidade && !quantidadeRaw && /^\d+\.0$/.test(codigo ?? '')) continue;
         rows.push({
-          categoria: this.readText(item.categoria ?? item.category),
-          codigo: this.readText(item.codigo ?? item.code),
+          categoria,
+          codigo,
           descricao,
-          unidade: this.readText(item.unidade ?? item.unit),
-          quantidadeRaw: this.readText(item.quantidade_raw ?? item.quantidadeRaw ?? item.quantidade ?? item.quantity),
+          unidade,
+          quantidadeRaw,
           baixaConfianca: item.baixa_confianca === true || item.baixaConfianca === true || item.low_confidence === true,
         });
       }
@@ -630,6 +640,10 @@ export class VisionService implements OnModuleInit {
 
   private readText(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private isDateValue(value: string): boolean {
+    return /^\d{1,2}[\/-]\d{1,2}[\/-]\d{4}$/.test(value.trim());
   }
 
   /** Minimal CSV line parser that handles double-quoted fields with commas. */
