@@ -45,11 +45,16 @@ export class ExtractionService {
     // Structured Vision header is authoritative for document entities when the
     // scanned PDF has no selectable text for the generic entity extractor.
     const kv = params.keyValuePairs ?? {};
-    const obraName = kv['obra'] || kv['objeto'] || kv['titulo'];
+    const isDocumentTitle = (value?: string) =>
+      Boolean(value && /^(?:declara[cç][aã]o|atestado|certid[aã]o|reconhecimento)/i.test(value.trim()));
+    const visionObraName = kv['obra'] || kv['objeto'];
+    const extractedObraName = isDocumentTitle(entities.obra?.nome) ? undefined : entities.obra?.nome;
+    const titleFallback = isDocumentTitle(kv['titulo']) ? undefined : kv['titulo'];
+    const obraName = visionObraName || extractedObraName || titleFallback;
     if (obraName) {
       entities.obra = {
         ...(entities.obra ?? {}),
-        nome: entities.obra?.nome || obraName,
+        nome: obraName,
         local: entities.obra?.local || kv['local'],
         cidade: entities.obra?.cidade || kv['cidade'],
         estado: entities.obra?.estado || kv['estado'],

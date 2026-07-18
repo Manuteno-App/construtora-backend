@@ -139,13 +139,15 @@ export class VisionService implements OnModuleInit {
       const pageTexts: string[] = [];
       const pageRows: NonNullable<OcrResult['rawServiceRows']> = [];
       const visionDebug: NonNullable<OcrResult['visionDebug']> | undefined = captureDebug ? [] : undefined;
+      let inheritedCategory: string | undefined;
       const entries = await this.renderPagesFiltered(buffer);
       if (entries.length === 0) return empty;
 
       for (const { pageNumber, base64 } of entries) {
         const text = await this.callSinglePageVision(base64, pageNumber);
         pageTexts.push(text);
-        const rows = this.parseTableBlock(text) ?? [];
+        const rows = this.parseTableBlock(text, inheritedCategory) ?? [];
+        inheritedCategory = [...rows].reverse().find((row) => Boolean(row.categoria))?.categoria ?? inheritedCategory;
         pageRows.push(...rows);
         visionDebug?.push({ pageNumber, response: text, rawServiceRows: rows });
         this.logger.log('Vision page ' + pageNumber + '/' + entries.length + ': ' + rows.length + ' service rows');
@@ -203,10 +205,12 @@ export class VisionService implements OnModuleInit {
       const pageTexts: string[] = [];
       const pageRows: NonNullable<OcrResult['rawServiceRows']> = [];
       const visionDebug: NonNullable<OcrResult['visionDebug']> | undefined = captureDebug ? [] : undefined;
+      let inheritedCategory: string | undefined;
       for (const { pageNumber, base64 } of pageEntries) {
         const text = await this.callSinglePageVision(base64, pageNumber);
         pageTexts.push(text);
-        const rows = this.parseTableBlock(text) ?? [];
+        const rows = this.parseTableBlock(text, inheritedCategory) ?? [];
+        inheritedCategory = [...rows].reverse().find((row) => Boolean(row.categoria))?.categoria ?? inheritedCategory;
         pageRows.push(...rows);
         visionDebug?.push({ pageNumber, response: text, rawServiceRows: rows });
         this.logger.log('Selective Vision page ' + pageNumber + ': ' + rows.length + ' service rows');
@@ -467,9 +471,10 @@ export class VisionService implements OnModuleInit {
           role: 'system',
           content:
             'Extract Brazilian construction certificate data. Return ONLY two JSON blocks.\n' +
-            '===HEADER_JSON_START===\n{ "obra":"string|null", "contratante":"string|null", "contratada":"string|null", "cnpj":"string|null", "cnpj_contratada":"string|null", "contrato":"string|null", "cidade":"string|null", "estado":"string|null", "local":"string|null", "data_atestado":"DD/MM/YYYY|null", "data_inicio":"DD/MM/YYYY|null", "data_fim":"DD/MM/YYYY|null", "engenheiro":"string|null", "titulo":"string|null" }\n===HEADER_JSON_END===\n' +
+            '===HEADER_JSON_START===\n{ "obra":"string|null", "objeto":"string|null", "contratante":"string|null", "contratada":"string|null", "cnpj":"string|null", "cnpj_contratada":"string|null", "contrato":"string|null", "cidade":"string|null", "estado":"string|null", "local":"string|null", "data_atestado":"DD/MM/YYYY|null", "data_inicio":"DD/MM/YYYY|null", "data_fim":"DD/MM/YYYY|null", "engenheiro":"string|null", "titulo":"string|null" }\n===HEADER_JSON_END===\n' +
             '===ITEMS_JSON_START===\n{ "itens":[{ "codigo":"string|null", "descricao":"string", "categoria":"string|null", "unidade":"string|null", "quantidade_raw":"string|null", "baixa_confianca":false }] }\n===ITEMS_JSON_END===\n' +
-            'For the header, explicitly capture the document end or completion date as data_fim, including labels such as data de conclusao, termino, fim dos servicos, or prazo final. ' +
+            'For the header, capture objeto as the name or description of the project/work. A document title such as Declaracao de Conclusao de Obras is never the object. Explicitly capture the document end or completion date as data_fim, including labels such as data de conclusao, termino, fim dos servicos, or prazo final. ' +
+            'A code N.0 without both unit and quantity is a category header: do not return it as an item and copy its text as categoria to every following item until the next such header. A code N.0 with both unit and quantity is a real item and must be returned. ' +
             'Return one flat item for every service row visible on this page. Repeat the textual category on EVERY item in that category. Remove a numeric prefix from categories: "2.0 POSTO" must be "POSTO". Never use a numeric value, 0, 00, total, or section number as categoria. Keep item codes such as 2.4 and 20.1. If no textual category is visible, set categoria to null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
         },
         {
@@ -513,7 +518,7 @@ export class VisionService implements OnModuleInit {
       }
 
       try {
-        const marker = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
+        const marker = /(?:===|###)\s*ITEMS_JSON_START(?:===)?\s*([\s\S]*?)\s*(?:===|###)\s*ITEMS_JSON_END(?:===)?/i.exec(text);
         const parsed = marker
           ? this.parseJsonObject(marker[1])
           : this.findJsonObject(text, (value) => Array.isArray(value.itens) || Array.isArray(value.items));
@@ -524,8 +529,8 @@ export class VisionService implements OnModuleInit {
       }
 
       const plain = text
-        .replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '')
-        .replace(/===ITEMS_JSON_START===[\s\S]*?===ITEMS_JSON_END===/gi, '')
+        .replace(/(?:===|###)\s*HEADER_JSON_START(?:===)?[\s\S]*?(?:===|###)\s*HEADER_JSON_END(?:===)?/gi, '')
+        .replace(/(?:===|###)\s*ITEMS_JSON_START(?:===)?[\s\S]*?(?:===|###)\s*ITEMS_JSON_END(?:===)?/gi, '')
         .trim();
       if (plain) transcriptions.push(plain);
     }
@@ -538,7 +543,7 @@ export class VisionService implements OnModuleInit {
   }
 
   private parseHeaderBlock(text: string): Record<string, string> {
-    const match = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
+    const match = /(?:===|###)\s*HEADER_JSON_START(?:===)?\s*([\s\S]*?)\s*(?:===|###)\s*HEADER_JSON_END(?:===)?/i.exec(text);
     try {
       const parsed = match
         ? this.parseJsonObject(match[1])
@@ -556,9 +561,9 @@ export class VisionService implements OnModuleInit {
     }
   }
 
-  private parseTableBlock(text: string): OcrResult['rawServiceRows'] {
+  private parseTableBlock(text: string, inheritedCategory?: string): OcrResult['rawServiceRows'] {
     try {
-      const match = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
+      const match = /(?:===|###)\s*ITEMS_JSON_START(?:===)?\s*([\s\S]*?)\s*(?:===|###)\s*ITEMS_JSON_END(?:===)?/i.exec(text);
       const parsed = match
         ? this.parseJsonObject(match[1])
         : this.findJsonObject(text, (value) => Array.isArray(value.itens) || Array.isArray(value.items));
@@ -566,6 +571,7 @@ export class VisionService implements OnModuleInit {
 
       const items = this.arrayOfRecords(parsed.itens ?? parsed.items);
       const rows: NonNullable<OcrResult['rawServiceRows']> = [];
+      let currentCategory = inheritedCategory;
 
       for (const item of items) {
         const descricao = this.readText(item.descricao ?? item.description);
@@ -574,10 +580,16 @@ export class VisionService implements OnModuleInit {
         const categoria = this.readText(item.categoria ?? item.category);
         const unidade = this.readText(item.unidade ?? item.unit);
         const quantidadeRaw = this.readText(item.quantidade_raw ?? item.quantidadeRaw ?? item.quantidade ?? item.quantity);
-        // A numbered category header is context, never a service line.
-        if (!categoria && !unidade && !quantidadeRaw && /^\d+\.0$/.test(codigo ?? '')) continue;
+        // N.0 without unit and quantity is a category header. N.0 with both
+        // values is a legitimate item and must be retained.
+        if (!unidade && !quantidadeRaw && /^\d+\.0$/.test(codigo ?? '')) {
+          currentCategory = categoria ?? descricao;
+          continue;
+        }
+        const resolvedCategory = categoria ?? currentCategory;
+        if (resolvedCategory) currentCategory = resolvedCategory;
         rows.push({
-          categoria,
+          categoria: resolvedCategory,
           codigo,
           descricao,
           unidade,
