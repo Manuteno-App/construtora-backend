@@ -55,7 +55,7 @@ export class ExtractionService {
         estado: entities.obra?.estado || kv['estado'],
         dataAtestado: entities.obra?.dataAtestado || kv['data_atestado'],
         dataInicio: entities.obra?.dataInicio || kv['data_inicio'],
-        dataFim: entities.obra?.dataFim || kv['data_fim'],
+        dataFim: entities.obra?.dataFim || kv['data_fim'] || kv['data_conclusao'] || kv['data_termino'],
         cliente: entities.obra?.cliente || kv['contratante'],
         engenheiro: entities.obra?.engenheiro || kv['engenheiro'],
       };

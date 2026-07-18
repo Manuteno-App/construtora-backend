@@ -60,7 +60,7 @@ export class EntityOrchestrationService {
    * Returns undefined for null literals, empty strings, and invalid dates. */
   private parseDate(val?: string): Date | undefined {
     if (!val || val === 'null' || val === 'undefined' || val.trim() === '') return undefined;
-    const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(val.trim());
+    const br = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/.exec(val.trim());
     if (br) {
       const d = new Date(Date.UTC(Number(br[3]), Number(br[2]) - 1, Number(br[1])));
       return isNaN(d.getTime()) ? undefined : d;

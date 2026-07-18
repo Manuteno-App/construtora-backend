@@ -469,6 +469,7 @@ export class VisionService implements OnModuleInit {
             'Extract Brazilian construction certificate data. Return ONLY two JSON blocks.\n' +
             '===HEADER_JSON_START===\n{ "obra":"string|null", "contratante":"string|null", "contratada":"string|null", "cnpj":"string|null", "cnpj_contratada":"string|null", "contrato":"string|null", "cidade":"string|null", "estado":"string|null", "local":"string|null", "data_atestado":"DD/MM/YYYY|null", "data_inicio":"DD/MM/YYYY|null", "data_fim":"DD/MM/YYYY|null", "engenheiro":"string|null", "titulo":"string|null" }\n===HEADER_JSON_END===\n' +
             '===ITEMS_JSON_START===\n{ "itens":[{ "codigo":"string|null", "descricao":"string", "categoria":"string|null", "unidade":"string|null", "quantidade_raw":"string|null", "baixa_confianca":false }] }\n===ITEMS_JSON_END===\n' +
+            'For the header, explicitly capture the document end or completion date as data_fim, including labels such as data de conclusao, termino, fim dos servicos, or prazo final. ' +
             'Return one flat item for every service row visible on this page. Repeat the textual category on EVERY item in that category. Remove a numeric prefix from categories: "2.0 POSTO" must be "POSTO". Never use a numeric value, 0, 00, total, or section number as categoria. Keep item codes such as 2.4 and 20.1. If no textual category is visible, set categoria to null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
         },
         {

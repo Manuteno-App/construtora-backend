@@ -1,19 +1,20 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { Queue } from 'bullmq';
+import { DataSource } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { DocumentService } from '../../../documents/core/service/document.service';
 import { AtestadoStatus } from '../../../documents/persistence/entity/atestado.entity';
 import { INGESTION_QUEUE } from '../../../infrastructure/queue/queue.module';
 import { StorageService } from '../../../infrastructure/storage/storage.service';
-import { ChunkRepository } from '../../persistence/repository/chunk.repository';
 
 @Injectable()
 export class IngestionService {
   constructor(
     private readonly storage: StorageService,
     private readonly documentService: DocumentService,
-    private readonly chunkRepo: ChunkRepository,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @InjectQueue(INGESTION_QUEUE) private readonly ingestionQueue: Queue,
   ) {}
 
@@ -48,9 +49,8 @@ export class IngestionService {
   async reindex(id: string): Promise<{ atestadoId: string; originalFilename: string; status: AtestadoStatus }> {
     const atestado = await this.documentService.findById(id);
 
-    // Chunks and embeddings are always regenerated from the PDF — delete them so they are recreated fresh.
-    // Obras, contratos and servicos_executados are preserved and upserted during extraction.
-    await this.chunkRepo.deleteByAtestadoId(id);
+    // Reprocessing replaces every derived record for this document.
+    await this.clearAtestadoExtractionData(id);
     await this.documentService.updateStatus(id, AtestadoStatus.PENDING, null);
     await this.documentService.updateLastReprocessedAt(id);
     await this.ingestionQueue.add('process-pdf', { atestadoId: id });
@@ -60,6 +60,17 @@ export class IngestionService {
       originalFilename: atestado.originalFilename,
       status: AtestadoStatus.PENDING,
     };
+  }
+
+  /** Reprocessing replaces document-derived data; shared companies remain intact. */
+  private async clearAtestadoExtractionData(atestadoId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query('DELETE FROM service_unit_observations WHERE atestado_id = $1', [atestadoId]);
+      await manager.query('DELETE FROM servicos_executados WHERE atestado_id = $1', [atestadoId]);
+      await manager.query('DELETE FROM chunks WHERE atestado_id = $1', [atestadoId]);
+      // contratos are removed by the obra foreign-key cascade; companies are shared.
+      await manager.query('DELETE FROM obras WHERE atestado_id = $1', [atestadoId]);
+    });
   }
 
   async getStatus(
