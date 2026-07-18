@@ -62,9 +62,15 @@ export class EntityOrchestrationService {
     if (!val || val === 'null' || val === 'undefined' || val.trim() === '') return undefined;
     const br = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/.exec(val.trim());
     if (br) {
-      const d = new Date(Date.UTC(Number(br[3]), Number(br[2]) - 1, Number(br[1])));
-      return isNaN(d.getTime()) ? undefined : d;
+      // Date-only database fields must use local calendar components. Creating
+      // midnight UTC serializes as the prior local day in America/Sao_Paulo.
+      const d = new Date(Number(br[3]), Number(br[2]) - 1, Number(br[1]));
+      return d.getFullYear() === Number(br[3]) && d.getMonth() === Number(br[2]) - 1 && d.getDate() === Number(br[1])
+        ? d
+        : undefined;
     }
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(val.trim());
+    if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
     const d = new Date(val);
     return isNaN(d.getTime()) ? undefined : d;
   }
