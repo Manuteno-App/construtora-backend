@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { OcrResult, TextractTable } from './vision.service';
+import type { OcrResult } from './vision.service';
 
 export interface ServicoItem {
   categoria?: string;
@@ -39,15 +39,11 @@ export class TableExtractorService {
 
   /**
    * Picks the best extraction strategy.
-   * Priority: (1) rawServiceRows from Vision structured block, (2) Textract TABLE blocks, (3) regex over raw text.
+   * Priority: (1) rawServiceRows from Vision structured block, (2) regex over native text.
    */
   extractBest(ocrResult: OcrResult): ServicoItem[] {
     if (ocrResult.rawServiceRows && ocrResult.rawServiceRows.length > 0) {
       return this.extractFromVisionRows(ocrResult.rawServiceRows);
-    }
-    if (ocrResult.tables.length > 0) {
-      const items = this.extractFromTables(ocrResult.tables);
-      if (items.length > 0) return items;
     }
     return this.extractFromText(ocrResult.text);
   }
@@ -63,116 +59,6 @@ export class TableExtractorService {
       baixaConfianca: r.baixaConfianca,
       metodoExtracao: 'VISION',
     }));
-  }
-
-  /** Parse structured TABLE blocks returned by Textract AnalyzeDocument */
-  extractFromTables(tables: TextractTable[]): ServicoItem[] {
-    const results: ServicoItem[] = [];
-
-    for (const table of tables) {
-      // Build an (rowIndex, colIndex) → text grid
-      const grid = new Map<string, string>();
-      for (const cell of table.cells) {
-        grid.set(`${cell.rowIndex},${cell.colIndex}`, cell.text);
-      }
-
-      const allRows = [...new Set(table.cells.map((c) => c.rowIndex))].sort(
-        (a, b) => a - b,
-      );
-
-      this.logger.log(
-        `Textract table p${table.page}: ${table.cells.length} cells, ${allRows.length} rows, ${table.cols} cols`,
-      );
-
-      if (allRows.length < 2) continue;
-
-      // Detect column roles from the header row
-      const headerRow = allRows[0];
-      let descCol = -1;
-      let unidadeCol = -1;
-      let quantidadeCol = -1;
-      let codigoCol = -1;
-
-      for (const cell of table.cells.filter((c) => c.rowIndex === headerRow)) {
-        const t = cell.text.toUpperCase().trim();
-        if (/NATUREZA|DESCRI[CÇ]|SERVI[CÇ]O|DISCRIMINA|DENOMINA|ATIVIDADE|ESPECIFICA|OBJETO/.test(t)) descCol = cell.colIndex;
-        else if (/^UNID|^UN\.?$/.test(t)) unidadeCol = cell.colIndex;
-        else if (/QUANT|QTD|QDE/.test(t)) quantidadeCol = cell.colIndex;
-        else if (/^C[OÓ]D|^ITEM$|^N[º°.]\s*$|^#/.test(t)) codigoCol = cell.colIndex;
-      }
-
-      // Heuristic fallback when header row is missing or not recognised:
-      // treat the widest non-numeric cell in the first data row as description
-      if (descCol === -1 && allRows.length > 1) {
-        const firstDataRow = allRows[1];
-        let maxLen = 0;
-        for (const cell of table.cells.filter((c) => c.rowIndex === firstDataRow)) {
-          if (cell.text.length > maxLen && !/^[\d,.]+$/.test(cell.text.trim())) {
-            maxLen = cell.text.length;
-            descCol = cell.colIndex;
-          }
-        }
-      }
-
-      if (descCol === -1) continue;
-
-      this.logger.log(
-        `Textract table p${table.page}: descCol=${descCol} unidadeCol=${unidadeCol} quantidadeCol=${quantidadeCol} codigoCol=${codigoCol}`,
-      );
-
-      let currentCategory = 'GERAL';
-
-      for (const rowIdx of allRows.slice(1)) {
-        const descText = (grid.get(`${rowIdx},${descCol}`) ?? '').trim();
-        if (!descText) continue;
-
-        const qRaw =
-          quantidadeCol >= 0 ? (grid.get(`${rowIdx},${quantidadeCol}`) ?? '') : '';
-        const hasQuantity = qRaw.trim() !== '' && qRaw.trim() !== '-';
-
-        // Category/subcategory: has a description but no valid quantity.
-        // Handles both all-caps headers AND hierarchical code rows (01, 01.01)
-        if (!hasQuantity) {
-          if (descText && isValidCategoryHeader(descText)) currentCategory = descText;
-          // When the quantity column was not identified at all, still extract rows that
-          // look like service descriptions (mixed/lower-case) rather than section headers.
-          if (quantidadeCol === -1 && !CATEGORY_HEADER_RE.test(descText)) {
-            const unidade =
-              unidadeCol >= 0 ? (grid.get(`${rowIdx},${unidadeCol}`) ?? undefined) : undefined;
-            const codigo =
-              codigoCol >= 0 ? (grid.get(`${rowIdx},${codigoCol}`) ?? undefined) : undefined;
-            results.push({
-              categoria: currentCategory,
-              codigo: codigo || undefined,
-              descricao: descText,
-              unidade: unidade || undefined,
-              quantidade: undefined,
-            });
-          }
-          continue;
-        }
-
-        const unidade =
-          unidadeCol >= 0 ? (grid.get(`${rowIdx},${unidadeCol}`) ?? undefined) : undefined;
-        const codigo =
-          codigoCol >= 0 ? (grid.get(`${rowIdx},${codigoCol}`) ?? undefined) : undefined;
-        const quantidade = qRaw
-          ? parseFloat(qRaw.replace(/\./g, '').replace(',', '.'))
-          : NaN;
-
-        results.push({
-          categoria: currentCategory,
-          codigo: codigo || undefined,
-          descricao: descText,
-          unidade: unidade || undefined,
-          quantidadeRaw: qRaw || undefined,
-          quantidade: isNaN(quantidade) ? undefined : quantidade,
-          metodoExtracao: 'NATIVE',
-        });
-      }
-    }
-
-    return results;
   }
 
   /** Parse service items from raw OCR text using regex (legacy / fallback) */

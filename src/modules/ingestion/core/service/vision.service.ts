@@ -1,9 +1,3 @@
-import {
-  Block,
-  GetDocumentAnalysisCommand,
-  StartDocumentAnalysisCommand,
-  TextractClient,
-} from '@aws-sdk/client-textract';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
@@ -12,28 +6,9 @@ import { isValidCategoryHeader } from './table-extractor.service';
 // Dynamic imports used to avoid hard dependency at module load time
 type CanvasLib = typeof import('canvas');
 type PdfjsLib = typeof import('pdfjs-dist');
-type TesseractModule = typeof import('tesseract.js');
-
-export interface TextractCell {
-  rowIndex: number;
-  colIndex: number;
-  rowSpan: number;
-  colSpan: number;
-  text: string;
-  confidence: number;
-}
-
-export interface TextractTable {
-  page: number;
-  cells: TextractCell[];
-  rows: number;
-  cols: number;
-}
-
 export interface OcrResult {
   text: string;
   pages: Array<{ pageNumber: number; text: string }>;
-  tables: TextractTable[];
   keyValuePairs: Record<string, string>;
   avgConfidence: number;
   /** Service rows extracted directly from the Vision structured table block */
@@ -69,7 +44,6 @@ export class VisionService implements OnModuleInit {
 
   private canvasLib: CanvasLib | null = null;
   private pdfjsLib: PdfjsLib | null = null;
-  private tesseractLib: TesseractModule | null = null;
 
   constructor(private readonly config: ConfigService) {
     this.openai = new OpenAI({ apiKey: config.get<string>('openaiApiKey') });
@@ -95,19 +69,6 @@ export class VisionService implements OnModuleInit {
         err,
       );
     }
-
-    // tesseract.js is optional — enables cheaper Tesseract+GPT-mini OCR path
-    try {
-      this.tesseractLib = (await new Function(
-        'return import("tesseract.js")',
-      )()) as TesseractModule;
-      this.logger.log('VisionService: tesseract.js loaded — Tesseract OCR enabled');
-    } catch {
-      this.logger.warn(
-        'tesseract.js not available — GPT-4o Vision will be used for OCR. ' +
-          'Run `npm install tesseract.js` to enable cheaper Tesseract-based OCR.',
-      );
-    }
   }
 
   isAvailable(): boolean {
@@ -123,7 +84,6 @@ export class VisionService implements OnModuleInit {
     const empty: OcrResult = {
       text: '',
       pages: [],
-      tables: [],
       keyValuePairs: {},
       avgConfidence: 0,
     };
@@ -170,8 +130,7 @@ export class VisionService implements OnModuleInit {
       return {
         text: pages.map((p) => p.text).join('\n\n'),
         pages,
-        tables: [],
-        keyValuePairs,
+          keyValuePairs,
         avgConfidence: 100,
         rawServiceRows,
         visionDebug,
@@ -191,7 +150,6 @@ export class VisionService implements OnModuleInit {
     const empty: OcrResult = {
       text: '',
       pages: [],
-      tables: [],
       keyValuePairs: {},
       avgConfidence: 0,
     };
@@ -225,8 +183,7 @@ export class VisionService implements OnModuleInit {
       return {
         text: pages.map((p) => p.text).join('\n\n'),
         pages,
-        tables: [],
-        keyValuePairs,
+          keyValuePairs,
         avgConfidence: 100,
         rawServiceRows,
         visionDebug,
@@ -466,6 +423,7 @@ export class VisionService implements OnModuleInit {
     const model = this.config.get<string>('chatModel') ?? 'gpt-4o-mini';
     const response = await this.openai.chat.completions.create({
       model,
+      temperature: 0,
       messages: [
         {
           role: 'system',
@@ -475,7 +433,7 @@ export class VisionService implements OnModuleInit {
             '===ITEMS_JSON_START===\n{ "itens":[{ "codigo":"string|null", "descricao":"string", "categoria":"string|null", "unidade":"string|null", "quantidade_raw":"string|null", "baixa_confianca":false }] }\n===ITEMS_JSON_END===\n' +
             'For the header, capture objeto as the name or description of the project/work. A document title such as Declaracao de Conclusao de Obras is never the object. Explicitly capture the document end or completion date as data_fim, including labels such as data de conclusao, termino, fim dos servicos, or prazo final. ' +
             'A code N.0 without both unit and quantity is a category header: do not return it as an item and copy its text as categoria to every following item until the next such header. A code N.0 with both unit and quantity is a real item and must be returned. ' +
-            'Return one flat item for every service row visible on this page. Never omit rows and never use comments, placeholders, ellipses, or phrases such as "additional items would follow". Repeat the textual category on EVERY item in that category. Remove a numeric prefix from categories: "2.0 POSTO" must be "POSTO". Never use a numeric value, 0, 00, total, or section number as categoria. Keep item codes such as 2.4 and 20.1. If no textual category is visible, set categoria to null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
+            'Return one flat item for every service row visible on this page. Never omit rows and never use comments, placeholders, ellipses, or phrases such as "additional items would follow". Repeat the textual category on EVERY item in that category. Remove a numeric prefix from categories: "2.0 POSTO" must be "POSTO". Never use a numeric value, 0, 00, total, or section number as categoria. Keep item codes such as 2.4 and 20.1. If a textual category is printed as a standalone row without code, unit, or quantity, apply it to the following services and do not return that header as a service. A service may have codigo null: return it normally when it has a description and its printed unit or quantity. If no textual category is visible, set categoria to null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true. For every unavailable value, emit JSON null: never emit the literal strings "null", "string|null", "DD/MM/YYYY|null", or a schema/example value.',
         },
         {
           role: 'user',
@@ -552,7 +510,8 @@ export class VisionService implements OnModuleInit {
 
       const result: Record<string, string> = {};
       for (const [k, v] of Object.entries(parsed)) {
-        if (v && typeof v === 'string' && v.trim()) result[k] = v.trim();
+        const textValue = this.readText(v);
+        if (textValue) result[k] = textValue;
       }
       return result;
     } catch {
@@ -580,10 +539,12 @@ export class VisionService implements OnModuleInit {
         const categoria = this.readText(item.categoria ?? item.category);
         const unidade = this.readText(item.unidade ?? item.unit);
         const quantidadeRaw = this.readText(item.quantidade_raw ?? item.quantidadeRaw ?? item.quantidade ?? item.quantity);
-        // N.0 without unit and quantity is a category header. N.0 with both
-        // values is a legitimate item and must be retained.
-        if (!unidade && !quantidadeRaw && /^\d+\.0$/.test(codigo ?? '')) {
-          currentCategory = categoria ?? descricao;
+        // A category can be written as either N.0 or a standalone textual row.
+        // Such rows have no unit or quantity and establish the category for the
+        // following services; a missing item code must never discard a service.
+        const categoryHeader = categoria ?? descricao;
+        if (!unidade && !quantidadeRaw && isValidCategoryHeader(categoryHeader)) {
+          currentCategory = categoryHeader;
           continue;
         }
         const resolvedCategory = categoria ?? currentCategory;
@@ -681,7 +642,13 @@ export class VisionService implements OnModuleInit {
   }
 
   private readText(value: unknown): string | undefined {
-    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    if (typeof value !== 'string') return undefined;
+    const text = value.trim();
+    return text && !this.isPlaceholderValue(text) ? text : undefined;
+  }
+
+  private isPlaceholderValue(value: string): boolean {
+    return /^(?:null|undefined|string\|null|dd\/mm\/yyyy(?:\|null)?|yyyy-mm-dd(?:\|null)?)$/i.test(value.trim());
   }
 
   private isDateValue(value: string): boolean {
@@ -739,124 +706,3 @@ export class VisionService implements OnModuleInit {
   }
 }
 
-// ─── TextractService ─────────────────────────────────────────────────────────
-// Co-located with TextractTable / TextractCell type definitions.
-
-/**
- * TextractService — AWS Textract async document analysis.
- * Last-resort fallback: called only when all Vision OCR paths return zero service rows.
- * Uses StartDocumentAnalysis (async, S3-based) which supports documents of any size.
- */
-@Injectable()
-export class TextractService {
-  private readonly client: TextractClient;
-  private readonly bucket: string;
-  private readonly logger = new Logger(TextractService.name);
-
-  constructor(private readonly config: ConfigService) {
-    this.client = new TextractClient({
-      region: config.get<string>('aws.region') ?? 'sa-east-1',
-      credentials: {
-        accessKeyId: config.get<string>('aws.accessKeyId') ?? '',
-        secretAccessKey: config.get<string>('aws.secretAccessKey') ?? '',
-      },
-    });
-    this.bucket = config.get<string>('aws.s3Bucket') ?? '';
-  }
-
-  async analyzeTables(s3Key: string): Promise<TextractTable[]> {
-    const startResponse = await this.client.send(
-      new StartDocumentAnalysisCommand({
-        DocumentLocation: {
-          S3Object: { Bucket: this.bucket, Name: s3Key },
-        },
-        FeatureTypes: ['TABLES'],
-      }),
-    );
-    const jobId = startResponse.JobId;
-    if (!jobId) throw new Error('Textract did not return a JobId');
-    this.logger.log(`Textract job started: ${jobId} for s3://${this.bucket}/${s3Key}`);
-    const blocks = await this.pollUntilComplete(jobId);
-    return this.blocksToTables(blocks);
-  }
-
-  private async pollUntilComplete(jobId: string): Promise<Block[]> {
-    const MAX_WAIT_MS = 5 * 60 * 1000;
-    const POLL_INTERVAL_MS = 5_000;
-    const deadline = Date.now() + MAX_WAIT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-      const response = await this.client.send(
-        new GetDocumentAnalysisCommand({ JobId: jobId }),
-      );
-      if (response.JobStatus === 'FAILED') {
-        throw new Error(`Textract job failed: ${response.StatusMessage ?? 'Unknown error'}`);
-      }
-      if (response.JobStatus === 'SUCCEEDED') {
-        const allBlocks: Block[] = [...(response.Blocks ?? [])];
-        let nextToken = response.NextToken;
-        while (nextToken) {
-          const page = await this.client.send(
-            new GetDocumentAnalysisCommand({ JobId: jobId, NextToken: nextToken }),
-          );
-          allBlocks.push(...(page.Blocks ?? []));
-          nextToken = page.NextToken;
-        }
-        this.logger.log(`Textract job ${jobId} completed: ${allBlocks.length} blocks`);
-        return allBlocks;
-      }
-      // JobStatus === 'IN_PROGRESS' — continue polling
-    }
-    throw new Error(`Textract job timed out after 5 minutes (jobId=${jobId})`);
-  }
-
-  private blocksToTables(blocks: Block[]): TextractTable[] {
-    const blockMap = new Map<string, Block>(
-      blocks.filter((b) => b.Id).map((b) => [b.Id!, b]),
-    );
-    const tableBlocks = blocks.filter((b) => b.BlockType === 'TABLE');
-    this.logger.log(`Textract blocksToTables: ${tableBlocks.length} TABLE blocks from ${blocks.length} total blocks`);
-    return tableBlocks.map((table) => {
-      const directChildIds =
-        table.Relationships?.filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids ?? []) ?? [];
-      // Resolve MERGED_CELL blocks: their component CELLs may not be direct TABLE children
-      const allCellIds: string[] = [];
-      for (const id of directChildIds) {
-        const block = blockMap.get(id);
-        if (block?.BlockType === 'CELL') {
-          allCellIds.push(id);
-        } else if (block?.BlockType === 'MERGED_CELL') {
-          const mergedChildIds =
-            block.Relationships?.filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids ?? []) ?? [];
-          allCellIds.push(...mergedChildIds);
-        }
-      }
-      const cells: TextractCell[] = allCellIds
-        .map((id) => blockMap.get(id))
-        .filter(
-          (b): b is Block =>
-            b?.BlockType === 'CELL' && b.RowIndex != null && b.ColumnIndex != null,
-        )
-        .map((cell) => {
-          const wordIds =
-            cell.Relationships?.filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids ?? []) ?? [];
-          const text = wordIds
-            .map((id) => blockMap.get(id))
-            .filter((b): b is Block => b?.BlockType === 'WORD' || b?.BlockType === 'LINE')
-            .map((b) => b.Text ?? '')
-            .join(' ');
-          return {
-            rowIndex: cell.RowIndex! - 1,
-            colIndex: cell.ColumnIndex! - 1,
-            rowSpan: cell.RowSpan ?? 1,
-            colSpan: cell.ColumnSpan ?? 1,
-            text,
-            confidence: cell.Confidence ?? 0,
-          };
-        });
-      const maxRow = cells.reduce((m, c) => Math.max(m, c.rowIndex + c.rowSpan), 0);
-      const maxCol = cells.reduce((m, c) => Math.max(m, c.colIndex + c.colSpan), 0);
-      return { page: table.Page ?? 1, cells, rows: maxRow, cols: maxCol };
-    });
-  }
-}
