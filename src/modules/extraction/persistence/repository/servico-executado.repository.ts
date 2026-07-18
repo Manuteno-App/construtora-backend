@@ -15,6 +15,11 @@ export interface ServicoExecutadoRow {
   unitId?: string;
   unitSymbolRaw?: string;
   normalizedServiceKey?: string;
+  itemKey?: string;
+  quantidadeRaw?: string;
+  extractionMethod?: string;
+  extractionVersion?: string;
+  baixaConfianca?: boolean;
   quantidade?: number;
 }
 
@@ -88,8 +93,8 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
       .into(ServicoExecutado)
       .values(rows as any[])
       .orUpdate(
-        ['descricao', 'unidade', 'unit_id', 'unit_symbol_raw', 'normalized_service_key', 'quantidade', 'categoria', 'obra_id'],
-        ['atestado_id', 'codigo', 'trecho'],
+        ['descricao', 'unidade', 'unit_id', 'unit_symbol_raw', 'normalized_service_key', 'quantidade', 'quantidade_raw', 'categoria', 'obra_id', 'extraction_method', 'extraction_version', 'baixa_confianca'],
+        ['atestado_id', 'item_key'],
       )
       .execute();
   }

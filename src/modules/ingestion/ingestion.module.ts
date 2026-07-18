@@ -6,7 +6,7 @@ import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../infrastructure/queue/queue
 import { StorageModule } from '../infrastructure/storage/storage.module';
 import { IngestionService } from './core/service/ingestion.service';
 import { TableExtractorService } from './core/service/table-extractor.service';
-import { TextractService, VisionService } from './core/service/vision.service';
+import { VisionService } from './core/service/vision.service';
 import { IngestionController } from './http/rest/controller/ingestion.controller';
 import { Chunk } from './persistence/entity/chunk.entity';
 import { ChunkRepository } from './persistence/repository/chunk.repository';
@@ -25,7 +25,6 @@ import { INGESTION_API } from './public-api/interface/ingestion-api.interface';
     ChunkRepository,
     TableExtractorService,
     VisionService,
-    TextractService,
     IngestionService,
     IngestionFacade,
     { provide: INGESTION_API, useExisting: IngestionFacade },

@@ -3,11 +3,15 @@ import type { OcrResult, TextractTable } from './vision.service';
 
 export interface ServicoItem {
   trecho?: string;
-  categoria: string;
+  categoria?: string;
   codigo?: string;
   descricao: string;
   unidade?: string;
+  /** Exact quantity returned by OCR/native text; parsed only before persistence. */
+  quantidadeRaw?: string;
   quantidade?: number;
+  baixaConfianca?: boolean;
+  metodoExtracao?: 'NATIVE' | 'VISION';
 }
 
 // All-uppercase header pattern (e.g. TERRAPLENAGEM, SERVIÇOS PRELIMINARES)
@@ -51,17 +55,16 @@ export class TableExtractorService {
 
   /** Convert rawServiceRows (from Vision CSV block) into ServicoItem[]. */
   extractFromVisionRows(rows: NonNullable<OcrResult['rawServiceRows']>): ServicoItem[] {
-    return rows.map((r) => {
-      const raw = r.quantidade ?? '';
-      const quantidade = raw ? parseFloat(raw.replace(/\./g, '').replace(',', '.')) : NaN;
-      return {
-        categoria: r.categoria ?? 'GERAL',
-        codigo:    r.codigo   || undefined,
-        descricao: r.descricao,
-        unidade:   r.unidade  || undefined,
-        quantidade: isNaN(quantidade) ? undefined : quantidade,
-      };
-    });
+    return rows.map((r) => ({
+      trecho: r.trecho,
+      categoria: r.categoria,
+      codigo: r.codigo || undefined,
+      descricao: r.descricao,
+      unidade: r.unidade || undefined,
+      quantidadeRaw: r.quantidadeRaw,
+      baixaConfianca: r.baixaConfianca,
+      metodoExtracao: 'VISION',
+    }));
   }
 
   /** Parse structured TABLE blocks returned by Textract AnalyzeDocument */
@@ -164,7 +167,9 @@ export class TableExtractorService {
           codigo: codigo || undefined,
           descricao: descText,
           unidade: unidade || undefined,
+          quantidadeRaw: qRaw || undefined,
           quantidade: isNaN(quantidade) ? undefined : quantidade,
+          metodoExtracao: 'NATIVE',
         });
       }
     }
@@ -197,14 +202,14 @@ export class TableExtractorService {
       const match = TABLE_ROW_RE.exec(line);
       if (match) {
         const [, codigo, descricao, unidade, quantidadeRaw] = match;
-        const quantidade = parseFloat(quantidadeRaw.replace(',', '.'));
         results.push({
           trecho: currentTrecho,
           categoria: currentCategory,
           codigo,
           descricao: descricao.trim(),
           unidade,
-          quantidade: isNaN(quantidade) ? undefined : quantidade,
+          quantidadeRaw,
+          metodoExtracao: 'NATIVE',
         });
       }
     }

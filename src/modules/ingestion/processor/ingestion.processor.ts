@@ -6,7 +6,7 @@ import { DOCUMENTS_API, IDocumentsApi } from '../../documents/public-api/interfa
 import { EXTRACTION_QUEUE, INGESTION_QUEUE } from '../../infrastructure/queue/queue.module';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { ServicoItem, TableExtractorService } from '../core/service/table-extractor.service';
-import { TextractService, VisionService } from '../core/service/vision.service';
+import { VisionService } from '../core/service/vision.service';
 import { ChunkRepository, CreateChunkData } from '../persistence/repository/chunk.repository';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -47,7 +47,6 @@ export class IngestionProcessor extends WorkerHost {
     private readonly storage: StorageService,
     private readonly tableExtractor: TableExtractorService,
     private readonly vision: VisionService,
-    private readonly textract: TextractService,
     private readonly chunkRepo: ChunkRepository,
     @Inject(DOCUMENTS_API) private readonly documentsApi: IDocumentsApi,
     @InjectQueue(EXTRACTION_QUEUE) private readonly extractionQueue: Queue,
@@ -135,22 +134,6 @@ export class IngestionProcessor extends WorkerHost {
         keyValuePairs = this.extractHeaderHints(fullText);
       }
 
-      // Textract fallback: only when no services found by any previous method
-      if (tabelaServicos.length === 0) {
-        this.logger.log(`No services found via OCR — trying AWS Textract for ${atestadoId}`);
-        try {
-          const textractTables = await this.textract.analyzeTables(atestado.s3Key);
-          if (textractTables.length > 0) {
-            const items = this.tableExtractor.extractFromTables(textractTables);
-            if (items.length > 0) {
-              tabelaServicos = items;
-              this.logger.log(`Textract found ${tabelaServicos.length} services for ${atestadoId}`);
-            }
-          }
-        } catch (err) {
-          this.logger.warn(`Textract fallback failed for ${atestadoId}`, err);
-        }
-      }
 
       const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
       const savedChunks = await this.chunkRepo.saveMany(

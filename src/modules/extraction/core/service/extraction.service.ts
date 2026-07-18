@@ -42,31 +42,32 @@ export class ExtractionService {
       params.keyValuePairs ?? {},
     );
 
-    // Apply Vision header hints as fallbacks when LLM extraction returned null
+    // Structured Vision header is authoritative for document entities when the
+    // scanned PDF has no selectable text for the generic entity extractor.
     const kv = params.keyValuePairs ?? {};
-    if (!entities.obra && kv['obra']) {
-      entities.obra = { nome: kv['obra'] };
+    const obraName = kv['obra'] || kv['objeto'] || kv['titulo'];
+    if (obraName) {
+      entities.obra = {
+        ...(entities.obra ?? {}),
+        nome: entities.obra?.nome || obraName,
+        local: entities.obra?.local || kv['local'],
+        cidade: entities.obra?.cidade || kv['cidade'],
+        estado: entities.obra?.estado || kv['estado'],
+        dataAtestado: entities.obra?.dataAtestado || kv['data_atestado'],
+        dataInicio: entities.obra?.dataInicio || kv['data_inicio'],
+        dataFim: entities.obra?.dataFim || kv['data_fim'],
+        cliente: entities.obra?.cliente || kv['contratante'],
+        engenheiro: entities.obra?.engenheiro || kv['engenheiro'],
+      };
     }
-    if (entities.obra) {
-      (entities.obra as Record<string, unknown>)['nome'] ??= kv['obra'];
-      (entities.obra as Record<string, unknown>)['cliente'] ??= kv['contratante'];
-      (entities.obra as Record<string, unknown>)['cidade'] ??= kv['cidade'];
-      (entities.obra as Record<string, unknown>)['estado'] ??= kv['estado'];
-      (entities.obra as Record<string, unknown>)['engenheiro'] ??= kv['engenheiro'];
-    }
+    const visionCompanies: Array<{ nome: string; cnpj?: string; tipo: string }> = [];
+    if (kv['contratante']) visionCompanies.push({ nome: kv['contratante'], cnpj: kv['cnpj'], tipo: 'CONTRATANTE' });
+    if (kv['contratada']) visionCompanies.push({ nome: kv['contratada'], cnpj: kv['cnpj_contratada'], tipo: 'CONTRATADA' });
+    if (visionCompanies.length) entities.empresas = visionCompanies;
+    if (kv['contrato']) entities.contrato = { ...(entities.contrato ?? {}), numero: kv['contrato'] };
 
-    let tabelaServicos = params.tabelaServicos;
-    if (tabelaServicos.length === 0) {
-      if (fullText.length < 500) {
-        this.logger.warn(
-          `Skipping services extraction — text too short (${fullText.length} chars), likely OCR refusal or empty document`,
-        );
-      } else {
-        this.logger.log('No services from ingestion — running GPT services extraction');
-        tabelaServicos = await this.extractServicosFromText(fullText);
-        this.logger.log(`GPT services extraction found ${tabelaServicos.length} items`);
-      }
-    }
+    // Rows are produced once by ingestion; do not reconstruct the table later.
+    const tabelaServicos = params.tabelaServicos;
 
     await this.orchestration.persistExtractedEntities(
       entities,
@@ -154,50 +155,6 @@ JSON esperado:
     }
   }
 
-  private async extractServicosFromText(text: string): Promise<ServicoItem[]> {
-    const prompt = `Você é um extrator especialista em Atestados de Capacidade Técnica (CAT) de obras de construção civil brasileiras.
-
-Analise o texto abaixo e extraia TODOS os itens da tabela de serviços executados.
-Retorne um objeto JSON com a chave "servicos" contendo um array de itens.
-
-INSTRUÇÕES:
-- "categoria": nome da categoria/seção à qual o item pertence (ex: "TERRAPLENAGEM", "PAVIMENTAÇÃO", "DRENAGEM")
-- "codigo": código do item (ex: "01.01", "E-01") — null se não houver
-- "descricao": descrição completa do serviço
-- "unidade": unidade de medida (ex: "m²", "m³", "km", "un", "m") — null se não houver
-- "quantidade": valor numérico da quantidade — null se não houver
-- Inclua TODOS os serviços com quantidade; ignore linhas de cabeçalho sem quantidade
-- Preserve a hierarquia de categorias: cada item herda a categoria da seção acima
-
-TEXTO:
-${text}
-
-Formato esperado:
-{ "servicos": [ { "categoria": "string", "codigo": "string ou null", "descricao": "string", "unidade": "string ou null", "quantidade": number ou null } ] }`;
-
-    const response = await this.openai.chat.completions.create({
-      model: this.extractionModel,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-      max_tokens: 16000,
-      response_format: { type: 'json_object' },
-    });
-
-    const content = response.choices[0]?.message?.content ?? '{"servicos":[]}';
-    const finishReason = response.choices[0]?.finish_reason;
-    if (finishReason === 'length') {
-      this.logger.warn('GPT services extraction was truncated (finish_reason=length) — partial results may be returned');
-    }
-
-    try {
-      const parsed = JSON.parse(this.stripJsonFences(content)) as { servicos?: ServicoItem[] };
-      const items = Array.isArray(parsed.servicos) ? parsed.servicos : [];
-      return items.filter((s) => s && typeof s.descricao === 'string' && s.descricao.trim());
-    } catch {
-      this.logger.warn('Failed to parse GPT-4 services JSON response', content);
-      return [];
-    }
-  }
 
   /** Strip ```json ... ``` or ``` ... ``` fences that LLMs sometimes add. */
   private stripJsonFences(raw: string): string {

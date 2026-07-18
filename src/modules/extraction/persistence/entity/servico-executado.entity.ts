@@ -11,7 +11,6 @@ import { Obra } from './obra.entity';
 import { Unit } from '../../../measurements/persistence/entity/unit.entity';
 
 @Entity('servicos_executados')
-@Unique(['atestadoId', 'codigo', 'trecho'])
 export class ServicoExecutado {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -60,6 +59,21 @@ export class ServicoExecutado {
 
   @Column({ name: 'normalized_service_key', nullable: true })
   normalizedServiceKey?: string;
+
+  @Column({ name: 'item_key', nullable: true, length: 512 })
+  itemKey?: string;
+
+  @Column({ name: 'quantidade_raw', nullable: true, length: 255 })
+  quantidadeRaw?: string;
+
+  @Column({ name: 'extraction_method', nullable: true, length: 32 })
+  extractionMethod?: string;
+
+  @Column({ name: 'extraction_version', nullable: true, length: 32 })
+  extractionVersion?: string;
+
+  @Column({ name: 'baixa_confianca', default: false })
+  baixaConfianca!: boolean;
 
   @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
   quantidade?: number;

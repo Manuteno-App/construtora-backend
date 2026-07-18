@@ -41,8 +41,10 @@ export interface OcrResult {
     codigo?: string;
     descricao: string;
     unidade?: string;
-    quantidade?: string;
+    quantidadeRaw?: string;
     categoria?: string;
+    trecho?: string;
+    baixaConfianca?: boolean;
   }>;
 }
 
@@ -447,23 +449,10 @@ export class VisionService implements OnModuleInit {
         {
           role: 'system',
           content:
-            'Você é especialista em leitura de Atestados de Capacidade Técnica (CAT) de obras de construção civil brasileiras.\n' +
-            'Ao processar a página, produza TRÊS seções:\n\n' +
-            '1. Bloco de cabeçalho JSON entre os marcadores ===HEADER_JSON_START=== e ===HEADER_JSON_END===\n' +
-            '   Formato: { "obra": "...", "contratante": "...", "contratada": "...", "cnpj": "...", "contrato": "...", ' +
-            '"cidade": "...", "estado": "UF", "valor_obra": "...", "valor_atestado": "...", ' +
-            '"data_atestado": "DD/MM/AAAA", "data_inicio": "DD/MM/AAAA", "data_fim": "DD/MM/AAAA", "engenheiro": "..." }\n' +
-            '   Se nenhum campo estiver nesta página, emita: ===HEADER_JSON_START==={}===HEADER_JSON_END===\n\n' +
-            '2. Tabela de serviços como CSV entre ===TABLE_CSV_START=== e ===TABLE_CSV_END===\n' +
-            '   Cabeçalho obrigatório: codigo,descricao,unidade,quantidade,categoria\n' +
-            '   - IMPORTANTE: junte em um único campo CSV toda descrição que ocupe múltiplas linhas na tabela\n' +
-            '   - Linhas de categoria/seção (sem código e sem quantidade): coloque o nome da categoria em descricao e deixe codigo, unidade e quantidade em branco\n' +
-            '   - NÃO inclua linhas de TOTAL, SUBTOTAL, SOMA ou resumo no CSV; omita-as completamente\n' +
-            '   - Quantidade vazia ou "-": deixe em branco\n' +
-            '   - Preserve números decimais exatamente como aparecem (ex: 1.234,560)\n' +
-            '   - Não use aspas desnecessárias; use aspas duplas apenas se o campo contiver vírgula\n' +
-            '   - Se não houver tabela nesta página, emita apenas o cabeçalho: codigo,descricao,unidade,quantidade,categoria\n\n' +
-            '3. Transcrição fiel do texto restante (excluindo os blocos acima), terminando com "---PAGE N END---" onde N é o número da página.',
+            'Extract Brazilian construction certificate data. Return ONLY two JSON blocks.\n' +
+            '===HEADER_JSON_START===\n{ "obra":"string|null", "contratante":"string|null", "contratada":"string|null", "cnpj":"string|null", "cnpj_contratada":"string|null", "contrato":"string|null", "cidade":"string|null", "estado":"string|null", "local":"string|null", "data_atestado":"DD/MM/YYYY|null", "data_inicio":"DD/MM/YYYY|null", "data_fim":"DD/MM/YYYY|null", "engenheiro":"string|null", "titulo":"string|null" }\n===HEADER_JSON_END===\n' +
+            '===ITEMS_JSON_START===\n{ "secoes":[{ "secao":"string|null", "categorias":[{ "categoria":"string|null", "itens":[{ "codigo":"string|null", "descricao":"string", "unidade":"string|null", "quantidade_raw":"string|null", "baixa_confianca":false }] }] }] }\n===ITEMS_JSON_END===\n' +
+            'Keep the table hierarchy. A category may start with 2.0 followed by its name. Keep item codes such as 2.4 and 20.1. Direct section items may have categoria null. Exclude totals. Preserve quantidade_raw exactly as printed. Do not invent unreadable values; set them null and baixa_confianca=true.',
         },
         {
           role: 'user',
@@ -492,46 +481,38 @@ export class VisionService implements OnModuleInit {
 
   private mergePageVisionResults(pageTexts: string[]): string {
     let mergedHeaderJson = '';
-    const allTableRows: string[] = [];
-    const allTranscriptions: string[] = [];
-
+    const secoes: unknown[] = [];
+    const transcriptions: string[] = [];
     for (const text of pageTexts) {
-      // Header: take the first non-empty one across all pages
       if (!mergedHeaderJson) {
-        const m = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
-        if (m && m[1].trim() !== '{}' && m[1].trim() !== '') {
-          mergedHeaderJson = m[1].trim();
-        }
+        const header = /===HEADER_JSON_START===\s*([\s\S]*?)\s*===HEADER_JSON_END===/i.exec(text);
+        if (header && header[1].trim() && header[1].trim() !== '{}') mergedHeaderJson = header[1].trim();
       }
-
-      // Table: merge rows from all pages; skip duplicate header lines
-      const tableMatch = /===TABLE_CSV_START===\s*([\s\S]*?)\s*===TABLE_CSV_END===/i.exec(text);
-      if (tableMatch) {
-        const lines = tableMatch[1].split('\n').map((l) => l.trim()).filter(Boolean);
-        for (const line of lines) {
-          if (line.toLowerCase().startsWith('codigo,') && allTableRows.length > 0) continue;
-          allTableRows.push(line);
-        }
+      const items = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
+      if (items) {
+        try {
+          const parsed = JSON.parse(items[1]) as {
+            secoes?: unknown[];
+            categorias?: unknown[];
+            itens?: unknown[];
+          };
+          if (Array.isArray(parsed.secoes)) {
+            secoes.push(...parsed.secoes);
+          } else if (Array.isArray(parsed.categorias)) {
+            secoes.push({ secao: null, categorias: parsed.categorias });
+          } else if (Array.isArray(parsed.itens)) {
+            // Tolerate a valid but flattened page response rather than dropping
+            // all services when the model omits the outer hierarchy.
+            secoes.push({ secao: null, categorias: [{ categoria: null, itens: parsed.itens }] });
+          }
+        } catch { this.logger.warn('Failed to parse Vision hierarchy JSON'); }
       }
-
-      // Transcription: strip structured blocks, keep the rest
-      const stripped = text
-        .replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '')
-        .replace(/===TABLE_CSV_START===[\s\S]*?===TABLE_CSV_END===/gi, '')
-        .trim();
-      if (stripped) allTranscriptions.push(stripped);
+      const plain = text.replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '').replace(/===ITEMS_JSON_START===[\s\S]*?===ITEMS_JSON_END===/gi, '').trim();
+      if (plain) transcriptions.push(plain);
     }
-
-    const headerBlock = mergedHeaderJson
-      ? `===HEADER_JSON_START===\n${mergedHeaderJson}\n===HEADER_JSON_END===`
-      : '';
-    const tableBlock =
-      allTableRows.length > 0
-        ? `===TABLE_CSV_START===\n${allTableRows.join('\n')}\n===TABLE_CSV_END===`
-        : '';
-    const transcription = allTranscriptions.join('\n\n');
-
-    return [headerBlock, tableBlock, transcription].filter(Boolean).join('\n\n');
+    const headerBlock = mergedHeaderJson ? '===HEADER_JSON_START===\n' + mergedHeaderJson + '\n===HEADER_JSON_END===' : '';
+    const itemsBlock = '===ITEMS_JSON_START===\n' + JSON.stringify({ secoes }) + '\n===ITEMS_JSON_END===';
+    return [headerBlock, itemsBlock, transcriptions.join('\n\n')].filter(Boolean).join('\n\n');
   }
 
   private parseHeaderBlock(text: string): Record<string, string> {
@@ -550,52 +531,56 @@ export class VisionService implements OnModuleInit {
     }
   }
 
-  private parseTableBlock(
-    text: string,
-  ): OcrResult['rawServiceRows'] {
-    const match = /===TABLE_CSV_START===\s*([\s\S]*?)\s*===TABLE_CSV_END===/i.exec(text);
+  private parseTableBlock(text: string): OcrResult['rawServiceRows'] {
+    const match = /===ITEMS_JSON_START===\s*([\s\S]*?)\s*===ITEMS_JSON_END===/i.exec(text);
     if (!match) return undefined;
+    try {
+      const parsed = JSON.parse(match[1]) as {
+        secoes?: Array<Record<string, unknown>>;
+        categorias?: Array<Record<string, unknown>>;
+        itens?: Array<Record<string, unknown>>;
+      };
+      const sections = Array.isArray(parsed.secoes)
+        ? parsed.secoes
+        : Array.isArray(parsed.categorias)
+          ? [{ secao: null, categorias: parsed.categorias }]
+          : Array.isArray(parsed.itens)
+            ? [{ secao: null, categorias: [{ categoria: null, itens: parsed.itens }] }]
+            : [];
+      if (!sections.length) return undefined;
 
-    const lines = match[1].split('\n').map((l) => l.trim()).filter(Boolean);
-    if (lines.length < 2) return undefined;
-
-    // Parse CSV header
-    const header = this.parseCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
-    const codigoIdx    = header.indexOf('codigo');
-    const descricaoIdx = header.indexOf('descricao');
-    const unidadeIdx   = header.indexOf('unidade');
-    const quantidadeIdx = header.indexOf('quantidade');
-    const categoriaIdx = header.indexOf('categoria');
-
-    if (descricaoIdx === -1) return undefined;
-
-    const rows: NonNullable<OcrResult['rawServiceRows']> = [];
-    let currentCategory = 'GERAL';
-
-    for (const line of lines.slice(1)) {
-      const cols = this.parseCsvLine(line);
-      const descricao = cols[descricaoIdx]?.trim() ?? '';
-      if (!descricao) continue;
-
-      const quantidade = cols[quantidadeIdx]?.trim() ?? '';
-      const unidade    = cols[unidadeIdx]?.trim() ?? '';
-
-      // Row without quantity → category/subcategory
-      if (!quantidade || quantidade === '-') {
-        if (isValidCategoryHeader(descricao)) currentCategory = descricao;
-        continue;
+      const rows: NonNullable<OcrResult['rawServiceRows']> = [];
+      let currentSection: string | undefined;
+      let currentCategory: string | undefined;
+      for (const section of sections) {
+        const sectionName = typeof section.secao === 'string' && section.secao.trim() ? section.secao.trim() : currentSection;
+        if (sectionName) currentSection = sectionName;
+        const categories = Array.isArray(section.categorias) ? section.categorias as Array<Record<string, unknown>> : [];
+        for (const group of categories) {
+          const category = typeof group.categoria === 'string' && group.categoria.trim() ? group.categoria.trim() : currentCategory;
+          if (category) currentCategory = category;
+          const items = Array.isArray(group.itens) ? group.itens as Array<Record<string, unknown>> : [];
+          for (const item of items) {
+            const descricao = typeof item.descricao === 'string' ? item.descricao.trim() : '';
+            if (!descricao) continue;
+            rows.push({
+              trecho: currentSection,
+              categoria: category,
+              codigo: typeof item.codigo === 'string' ? item.codigo.trim() || undefined : undefined,
+              descricao,
+              unidade: typeof item.unidade === 'string' ? item.unidade.trim() || undefined : undefined,
+              quantidadeRaw: typeof item.quantidade_raw === 'string' ? item.quantidade_raw.trim() || undefined : undefined,
+              baixaConfianca: item.baixa_confianca === true,
+            });
+          }
+        }
       }
-
-      rows.push({
-        codigo:     codigoIdx   >= 0 ? (cols[codigoIdx]?.trim()   || undefined) : undefined,
-        descricao,
-        unidade:    unidade || undefined,
-        quantidade: quantidade || undefined,
-        categoria:  categoriaIdx >= 0 ? (cols[categoriaIdx]?.trim() || currentCategory) : currentCategory,
-      });
+      if (!rows.length) this.logger.warn('Vision hierarchy contained no valid service rows');
+      return rows.length ? rows : undefined;
+    } catch {
+      this.logger.warn('Failed to parse Vision hierarchy JSON');
+      return undefined;
     }
-
-    return rows.length > 0 ? rows : undefined;
   }
 
   /** Minimal CSV line parser that handles double-quoted fields with commas. */
@@ -621,7 +606,7 @@ export class VisionService implements OnModuleInit {
   private removeStructuredBlocks(text: string): string {
     return text
       .replace(/===HEADER_JSON_START===[\s\S]*?===HEADER_JSON_END===/gi, '')
-      .replace(/===TABLE_CSV_START===[\s\S]*?===TABLE_CSV_END===/gi, '')
+      .replace(/===ITEMS_JSON_START===[\s\S]*?===ITEMS_JSON_END===/gi, '')
       .trim();
   }
 

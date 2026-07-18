@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { ServicoItem } from '../../../ingestion/core/service/table-extractor.service';
 import { MeasurementsService } from '../../../measurements/core/service/measurements.service';
+import { parseNumeroBR } from '../../../../common/utils/numero-br.util';
 import { EmpresaTipo } from '../../persistence/entity/empresa.entity';
 import { ContratoRepository } from '../../persistence/repository/contrato.repository';
 import { EmpresaRepository } from '../../persistence/repository/empresa.repository';
@@ -29,6 +30,8 @@ export interface ExtractedEntities {
 
 @Injectable()
 export class EntityOrchestrationService {
+  private readonly logger = new Logger(EntityOrchestrationService.name);
+
   constructor(
     private readonly obraRepo: ObraRepository,
     private readonly empresaRepo: EmpresaRepository,
@@ -37,10 +40,30 @@ export class EntityOrchestrationService {
     private readonly measurements: MeasurementsService,
   ) {}
 
+  private normalizeCategory(value?: string): string {
+    const category = value?.trim().replace(/\s+/g, ' ') ?? '';
+    return !category || /^(?:0+|(?:sub)?total|soma)$/i.test(category) || /^[A-Z]{0,3}[-.]?\d+(?:[.-]\d+)*$/i.test(category)
+      ? 'SEM_CATEGORIA'
+      : category;
+  }
+
+  private normalizeKeyPart(value?: string): string {
+    return (value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  private rowScore(row: { baixaConfianca?: boolean; quantidade?: number; descricao?: string }): number {
+    return (row.baixaConfianca ? 0 : 4) + (row.quantidade === undefined ? 0 : 2) + (row.descricao?.length ?? 0) / 1000;
+  }
+
   /** Safely parse a date string returned by the LLM.
    * Returns undefined for null literals, empty strings, and invalid dates. */
   private parseDate(val?: string): Date | undefined {
     if (!val || val === 'null' || val === 'undefined' || val.trim() === '') return undefined;
+    const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(val.trim());
+    if (br) {
+      const d = new Date(Date.UTC(Number(br[3]), Number(br[2]) - 1, Number(br[1])));
+      return isNaN(d.getTime()) ? undefined : d;
+    }
     const d = new Date(val);
     return isNaN(d.getTime()) ? undefined : d;
   }
@@ -94,44 +117,73 @@ export class EntityOrchestrationService {
 
     if (tabelaServicos.length > 0) {
       const resolutionCache = new Map<string, Awaited<ReturnType<MeasurementsService['resolveUnit']>>>();
-      const resolvedRows = [];
-      for (const s of tabelaServicos) {
-        const cacheKey = `${s.unidade ?? ''}::${s.descricao ?? ''}`;
+      const rowsByKey = new Map<string, any>();
+      let invalidQuantities = 0;
+      let missingCategories = 0;
+      let mergedDuplicates = 0;
+
+      for (const service of tabelaServicos) {
+        const rawQuantity = service.quantidadeRaw ?? (service.quantidade !== undefined ? String(service.quantidade) : undefined);
+        const quantity = rawQuantity === undefined ? undefined : parseNumeroBR(rawQuantity);
+        const category = this.normalizeCategory(service.categoria);
+        const invalidQuantity = rawQuantity !== undefined && quantity === undefined;
+        const baixaConfianca = Boolean(service.baixaConfianca) || invalidQuantity || category === 'SEM_CATEGORIA';
+        if (invalidQuantity) invalidQuantities++;
+        if (category === 'SEM_CATEGORIA') missingCategories++;
+
+        const cacheKey = (service.unidade ?? '') + '::' + service.descricao;
         let resolvedUnit = resolutionCache.get(cacheKey);
         if (!resolvedUnit) {
-          resolvedUnit = await this.measurements.resolveUnit(s.unidade, s.descricao);
+          resolvedUnit = await this.measurements.resolveUnit(service.unidade, service.descricao);
           resolutionCache.set(cacheKey, resolvedUnit);
         }
-        resolvedRows.push({
+
+        const normalizedCode = this.normalizeKeyPart(service.codigo);
+        const unitKey = resolvedUnit.normalizedSymbol || this.normalizeKeyPart(service.unidade) || 'sem-unidade';
+        const fallbackKey = [service.trecho, category, this.measurements.normalizeServiceKey(service.descricao)]
+          .map((part) => this.normalizeKeyPart(part))
+          .filter(Boolean)
+          .join('::');
+        const itemKey = (normalizedCode || fallbackKey) + '::' + unitKey;
+        const row = {
           atestadoId,
           obraId: savedObraId,
-          trecho: s.trecho,
-          categoria: s.categoria,
-          codigo: s.codigo,
-          descricao: s.descricao,
-          unidade: resolvedUnit.canonicalSymbol ?? s.unidade,
+          trecho: service.trecho,
+          categoria: category,
+          codigo: service.codigo?.trim() || undefined,
+          descricao: service.descricao.trim(),
+          unidade: resolvedUnit.canonicalSymbol ?? service.unidade,
           unitId: resolvedUnit.unitId,
-          unitSymbolRaw: s.unidade,
-          normalizedServiceKey: this.measurements.normalizeServiceKey(s.descricao),
-          quantidade: s.quantidade,
-        });
+          unitSymbolRaw: service.unidade,
+          normalizedServiceKey: this.measurements.normalizeServiceKey(service.descricao),
+          itemKey,
+          quantidadeRaw: rawQuantity,
+          quantidade: quantity,
+          baixaConfianca,
+          extractionMethod: service.metodoExtracao ?? 'NATIVE',
+          extractionVersion: 'v2',
+        };
+
+        const existing = rowsByKey.get(itemKey);
+        if (existing) {
+          mergedDuplicates++;
+          if (this.rowScore(row) > this.rowScore(existing)) rowsByKey.set(itemKey, row);
+        } else {
+          rowsByKey.set(itemKey, row);
+        }
       }
 
-      await this.servicoRepo.upsertMany(
-        resolvedRows,
-      );
+      const resolvedRows = [...rowsByKey.values()];
+      await this.servicoRepo.upsertMany(resolvedRows);
+      await Promise.all(resolvedRows.map((row) => this.measurements.recordServiceObservation({
+        atestadoId,
+        serviceDescription: row.descricao,
+        unitId: row.unitId,
+        quantity: row.quantidade,
+        rawUnitSymbol: row.unitSymbolRaw,
+      })));
 
-      await Promise.all(
-        resolvedRows.map((row) =>
-          this.measurements.recordServiceObservation({
-            atestadoId,
-            serviceDescription: row.descricao,
-            unitId: row.unitId,
-            quantity: row.quantidade,
-            rawUnitSymbol: row.unitSymbolRaw,
-          }),
-        ),
-      );
+      this.logger.log('Services v2: extracted=' + tabelaServicos.length + ' persisted=' + resolvedRows.length + ' invalidQuantities=' + invalidQuantities + ' missingCategories=' + missingCategories + ' mergedDuplicates=' + mergedDuplicates);
     }
 
     return { obraId: savedObraId };
