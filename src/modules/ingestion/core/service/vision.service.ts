@@ -119,7 +119,7 @@ export class VisionService implements OnModuleInit {
    * Used as the primary OCR path for scanned documents when pdf-parse yields
    * sparse text.
    */
-  async analyze(buffer: Buffer): Promise<OcrResult> {
+  async analyze(buffer: Buffer, captureDebug = false): Promise<OcrResult> {
     const empty: OcrResult = {
       text: '',
       pages: [],
@@ -138,7 +138,7 @@ export class VisionService implements OnModuleInit {
       // Avoids holding all pages in memory simultaneously (100-page PDF = 400 MB+).
       const pageTexts: string[] = [];
       const pageRows: NonNullable<OcrResult['rawServiceRows']> = [];
-      const visionDebug: NonNullable<OcrResult['visionDebug']> = [];
+      const visionDebug: NonNullable<OcrResult['visionDebug']> | undefined = captureDebug ? [] : undefined;
       const entries = await this.renderPagesFiltered(buffer);
       if (entries.length === 0) return empty;
 
@@ -147,7 +147,7 @@ export class VisionService implements OnModuleInit {
         pageTexts.push(text);
         const rows = this.parseTableBlock(text) ?? [];
         pageRows.push(...rows);
-        visionDebug.push({ pageNumber, response: text, rawServiceRows: rows });
+        visionDebug?.push({ pageNumber, response: text, rawServiceRows: rows });
         this.logger.log('Vision page ' + pageNumber + '/' + entries.length + ': ' + rows.length + ' service rows');
       }
 
@@ -185,7 +185,7 @@ export class VisionService implements OnModuleInit {
    * Used for hybrid OCR on mixed documents: digital pages keep their pdf-parse text while
    * scanned pages (identified by low character count) are sent through Vision.
    */
-  async analyzeSelectivePages(buffer: Buffer, pageNumbers: number[]): Promise<OcrResult> {
+  async analyzeSelectivePages(buffer: Buffer, pageNumbers: number[], captureDebug = false): Promise<OcrResult> {
     const empty: OcrResult = {
       text: '',
       pages: [],
@@ -202,13 +202,13 @@ export class VisionService implements OnModuleInit {
 
       const pageTexts: string[] = [];
       const pageRows: NonNullable<OcrResult['rawServiceRows']> = [];
-      const visionDebug: NonNullable<OcrResult['visionDebug']> = [];
+      const visionDebug: NonNullable<OcrResult['visionDebug']> | undefined = captureDebug ? [] : undefined;
       for (const { pageNumber, base64 } of pageEntries) {
         const text = await this.callSinglePageVision(base64, pageNumber);
         pageTexts.push(text);
         const rows = this.parseTableBlock(text) ?? [];
         pageRows.push(...rows);
-        visionDebug.push({ pageNumber, response: text, rawServiceRows: rows });
+        visionDebug?.push({ pageNumber, response: text, rawServiceRows: rows });
         this.logger.log('Selective Vision page ' + pageNumber + ': ' + rows.length + ' service rows');
       }
 

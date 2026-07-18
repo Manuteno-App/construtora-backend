@@ -72,6 +72,15 @@ export class ServicoExecutado {
   @Column({ name: 'baixa_confianca', default: false })
   baixaConfianca!: boolean;
 
-  @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
+  @Column({
+    type: 'numeric',
+    precision: 18,
+    scale: 6,
+    nullable: true,
+    transformer: {
+      to: (value?: number) => value === undefined || value === null ? null : value.toFixed(6),
+      from: (value?: string | null) => value === null || value === undefined ? undefined : Number(value),
+    },
+  })
   quantidade?: number;
 }

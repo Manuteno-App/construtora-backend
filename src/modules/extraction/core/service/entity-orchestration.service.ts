@@ -141,6 +141,7 @@ export class EntityOrchestrationService {
 
         const normalizedCode = this.normalizeKeyPart(service.codigo);
         const unitKey = resolvedUnit.normalizedSymbol || this.normalizeKeyPart(service.unidade) || 'sem-unidade';
+        const canonicalUnit = (resolvedUnit.canonicalSymbol ?? service.unidade)?.trim().toLowerCase();
         const fallbackKey = [category, this.measurements.normalizeServiceKey(service.descricao)]
           .map((part) => this.normalizeKeyPart(part))
           .filter(Boolean)
@@ -152,7 +153,7 @@ export class EntityOrchestrationService {
           categoria: category,
           codigo: service.codigo?.trim() || undefined,
           descricao: service.descricao.trim(),
-          unidade: resolvedUnit.canonicalSymbol ?? service.unidade,
+          unidade: canonicalUnit,
           unitId: resolvedUnit.unitId,
           unitSymbolRaw: service.unidade,
           normalizedServiceKey: this.measurements.normalizeServiceKey(service.descricao),

@@ -99,12 +99,13 @@ export class IngestionProcessor extends WorkerHost {
       let keyValuePairs: Record<string, string> = {};
       let tabelaServicos: ServicoItem[] = [];
       let visionDebug: OcrResult['visionDebug'];
+      const visionDebugEnabled = process.env.VISION_EXTRACTION_DEBUG?.trim().toLowerCase() === 'true';
 
       if (allSparse) {
         this.logger.log(
           `Using Vision OCR (full) for ${atestadoId} (fullText=${fullText.length} chars, sparseRatio=${sparseRatio.toFixed(2)})`,
         );
-        const ocrResult = await this.vision.analyze(buffer);
+        const ocrResult = await this.vision.analyze(buffer, visionDebugEnabled);
         fullText = ocrResult.text;
         pages = ocrResult.pages;
         keyValuePairs = ocrResult.keyValuePairs;
@@ -117,7 +118,7 @@ export class IngestionProcessor extends WorkerHost {
         );
         // Combining Vision rows from only sparse pages with native rows drops
         // all services from the other pages. Use one source for the whole table.
-        const ocrResult = await this.vision.analyze(buffer);
+        const ocrResult = await this.vision.analyze(buffer, visionDebugEnabled);
         fullText = ocrResult.text;
         pages = ocrResult.pages;
         keyValuePairs = ocrResult.keyValuePairs;
@@ -130,7 +131,9 @@ export class IngestionProcessor extends WorkerHost {
         keyValuePairs = this.extractHeaderHints(fullText);
       }
 
-      await this.writeVisionDebug(atestadoId, atestado.originalFilename, keyValuePairs, tabelaServicos, visionDebug);
+      if (visionDebugEnabled) {
+        await this.writeVisionDebug(atestadoId, atestado.originalFilename, keyValuePairs, tabelaServicos, visionDebug);
+      }
 
       const chunks = this.buildChunks(fullText, pages, atestado.originalFilename, keyValuePairs);
       const savedChunks = await this.chunkRepo.saveMany(
