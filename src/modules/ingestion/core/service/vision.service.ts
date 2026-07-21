@@ -19,6 +19,8 @@ export interface OcrResult {
     quantidadeRaw?: string;
     categoria?: string;
     baixaConfianca?: boolean;
+    /** Page-level work/object context used only to avoid false item-key merges. */
+    sourceScope?: string;
   }>;
   /** Per-page Vision payload retained only for local development diagnostics. */
   visionDebug?: Array<{
@@ -106,7 +108,9 @@ export class VisionService implements OnModuleInit {
       for (const { pageNumber, base64 } of entries) {
         const text = await this.callSinglePageVision(base64, pageNumber);
         pageTexts.push(text);
-        const rows = this.parseTableBlock(text, inheritedCategory) ?? [];
+        const pageHeader = this.parseHeaderBlock(text);
+        const sourceScope = pageHeader.obra ?? pageHeader.objeto ?? pageHeader.local;
+        const rows = this.parseTableBlock(text, inheritedCategory, sourceScope) ?? [];
         inheritedCategory = [...rows].reverse().find((row) => Boolean(row.categoria))?.categoria ?? inheritedCategory;
         pageRows.push(...rows);
         visionDebug?.push({ pageNumber, response: text, rawServiceRows: rows });
@@ -167,7 +171,9 @@ export class VisionService implements OnModuleInit {
       for (const { pageNumber, base64 } of pageEntries) {
         const text = await this.callSinglePageVision(base64, pageNumber);
         pageTexts.push(text);
-        const rows = this.parseTableBlock(text, inheritedCategory) ?? [];
+        const pageHeader = this.parseHeaderBlock(text);
+        const sourceScope = pageHeader.obra ?? pageHeader.objeto ?? pageHeader.local;
+        const rows = this.parseTableBlock(text, inheritedCategory, sourceScope) ?? [];
         inheritedCategory = [...rows].reverse().find((row) => Boolean(row.categoria))?.categoria ?? inheritedCategory;
         pageRows.push(...rows);
         visionDebug?.push({ pageNumber, response: text, rawServiceRows: rows });
@@ -420,10 +426,13 @@ export class VisionService implements OnModuleInit {
     base64Image: string,
     pageNum: number,
   ): Promise<string> {
-    const model = this.config.get<string>('chatModel') ?? 'gpt-4o-mini';
+    const model = this.config.get<string>('visionModel') ?? 'gpt-4.1-mini';
+    const usesReasoningApiParameters = /^(gpt-5|o[1-4])(?:[.-]|$)/i.test(model);
     const response = await this.openai.chat.completions.create({
       model,
-      temperature: 0,
+      ...(usesReasoningApiParameters
+        ? { max_completion_tokens: 8192 }
+        : { temperature: 0, max_tokens: 8192 }),
       messages: [
         {
           role: 'system',
@@ -449,10 +458,16 @@ export class VisionService implements OnModuleInit {
           ],
         },
       ],
-      max_tokens: 8192,
     });
 
-    const content = response.choices[0]?.message?.content ?? '';
+    const choice = response.choices[0];
+    const content = choice?.message?.content ?? '';
+    if (!content.trim()) {
+      this.logger.warn(
+        'Vision model ' + model + ' returned an empty response for page ' + pageNum +
+          ' (finish_reason=' + (choice?.finish_reason ?? 'unknown') + ')',
+      );
+    }
     if (this.isRefusal(content)) {
       this.logger.warn('GPT Vision refused page ' + pageNum + ' — skipping');
       return '---PAGE ' + pageNum + ' END---';
@@ -520,7 +535,11 @@ export class VisionService implements OnModuleInit {
     }
   }
 
-  private parseTableBlock(text: string, inheritedCategory?: string): OcrResult['rawServiceRows'] {
+  private parseTableBlock(
+    text: string,
+    inheritedCategory?: string,
+    sourceScope?: string,
+  ): OcrResult['rawServiceRows'] {
     try {
       const match = /(?:===|###)\s*ITEMS_JSON_START(?:===)?\s*([\s\S]*?)\s*(?:===|###)\s*ITEMS_JSON_END(?:===)?/i.exec(text);
       const parsed = match
@@ -555,6 +574,7 @@ export class VisionService implements OnModuleInit {
           descricao,
           unidade,
           quantidadeRaw,
+          sourceScope,
           baixaConfianca: item.baixa_confianca === true || item.baixaConfianca === true || item.low_confidence === true,
         });
       }
@@ -615,14 +635,20 @@ export class VisionService implements OnModuleInit {
     return result;
   }
 
-  /** Accepts valid JSON fenced by Markdown when the model omits our markers. */
+  /**
+   * Accepts JSON with markers, Markdown fences, or consecutive raw objects.
+   * GPT-5 may return { header } followed by { itens } without the markers.
+   */
   private findJsonObject(
     text: string,
     predicate: (value: Record<string, unknown>) => boolean,
   ): Record<string, unknown> | undefined {
     const fence = String.fromCharCode(96).repeat(3);
-    const candidates = [...text.matchAll(new RegExp(fence + '(?:json)?\\s*([\\s\\S]*?)' + fence, 'gi'))]
-      .map((match) => match[1]);
+    const candidates = [
+      ...[...text.matchAll(new RegExp(fence + '(?:json)?\\s*([\\s\\S]*?)' + fence, 'gi'))]
+        .map((match) => match[1]),
+      ...this.extractRawJsonObjects(text),
+    ];
 
     for (const candidate of candidates) {
       try {
@@ -631,10 +657,41 @@ export class VisionService implements OnModuleInit {
           return value as Record<string, unknown>;
         }
       } catch {
-        // Try the next fenced block.
+        // Try the next JSON object.
       }
     }
     return undefined;
+  }
+
+  private extractRawJsonObjects(text: string): string[] {
+    const candidates: string[] = [];
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+      } else if (char === '{') {
+        if (depth === 0) start = index;
+        depth++;
+      } else if (char === '}' && depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          candidates.push(text.slice(start, index + 1));
+          start = -1;
+        }
+      }
+    }
+    return candidates;
   }
 
   private arrayOfRecords(value: unknown): Array<Record<string, unknown>> {

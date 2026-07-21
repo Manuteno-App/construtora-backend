@@ -14,6 +14,7 @@ export const configurationSchema = Joi.object({
 
   OPENAI_API_KEY: Joi.string().required(),
   CHAT_MODEL: Joi.string().default('gpt-4o-mini'),
+  VISION_MODEL: Joi.string().default('gpt-5-mini'),
   EXTRACTION_MODEL: Joi.string().default('gpt-4o'),
 
   EMBEDDING_MODEL: Joi.string().default('text-embedding-3-small'),
@@ -49,6 +50,7 @@ export const configuration = () => ({
 
   openaiApiKey: process.env.OPENAI_API_KEY,
   chatModel: process.env.CHAT_MODEL ?? 'gpt-4o-mini',
+  visionModel: process.env.VISION_MODEL ?? 'gpt-5-mini',
   extractionModel: process.env.EXTRACTION_MODEL ?? 'gpt-4o-mini',
 
   embedding: {

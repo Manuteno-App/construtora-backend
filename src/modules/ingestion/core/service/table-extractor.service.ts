@@ -10,6 +10,8 @@ export interface ServicoItem {
   quantidadeRaw?: string;
   quantidade?: number;
   baixaConfianca?: boolean;
+  /** Context used in the persistence key; intentionally not displayed or persisted. */
+  sourceScope?: string;
   metodoExtracao?: 'NATIVE' | 'VISION';
 }
 
@@ -56,6 +58,7 @@ export class TableExtractorService {
       descricao: r.descricao,
       unidade: r.unidade || undefined,
       quantidadeRaw: r.quantidadeRaw,
+      sourceScope: r.sourceScope,
       baixaConfianca: r.baixaConfianca,
       metodoExtracao: 'VISION',
     }));

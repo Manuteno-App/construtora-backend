@@ -158,7 +158,10 @@ export class EntityOrchestrationService {
           .map((part) => this.normalizeKeyPart(part))
           .filter(Boolean)
           .join('::');
-        const itemKey = (normalizedCode || fallbackKey) + '::' + unitKey;
+        const scopeKey = this.normalizeKeyPart(service.sourceScope);
+        const itemKey = [scopeKey, normalizedCode || fallbackKey, unitKey]
+          .filter(Boolean)
+          .join('::');
         const row = {
           atestadoId,
           obraId: savedObraId,
