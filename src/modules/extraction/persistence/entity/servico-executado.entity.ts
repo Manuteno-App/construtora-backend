@@ -72,6 +72,10 @@ export class ServicoExecutado {
   @Column({ name: 'baixa_confianca', default: false })
   baixaConfianca!: boolean;
 
+  /** Prevents a later extraction from replacing a user-corrected row. */
+  @Column({ name: 'manual_override', default: false })
+  manualOverride!: boolean;
+
   @Column({
     type: 'numeric',
     precision: 18,

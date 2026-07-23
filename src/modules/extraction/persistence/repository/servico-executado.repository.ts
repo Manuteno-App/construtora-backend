@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { DefaultTypeOrmRepository } from '../../../../common/repository/default-typeorm.repository';
@@ -19,8 +20,20 @@ export interface ServicoExecutadoRow {
   extractionMethod?: string;
   extractionVersion?: string;
   baixaConfianca?: boolean;
+  manualOverride?: boolean;
   quantidade?: number;
 }
+export interface ManualServicoInput {
+  categoria?: string;
+  codigo?: string;
+  descricao: string;
+  unidade?: string;
+  unitId?: string;
+  unitSymbolRaw?: string;
+  normalizedServiceKey?: string;
+  quantidade?: number;
+}
+
 
 export interface AtestadoRef {
   id: string;
@@ -86,12 +99,27 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     await this.query('DELETE FROM servicos_executados WHERE atestado_id = $1', [atestadoId]);
   }
 
+  async createManual(atestadoId: string, input: ManualServicoInput): Promise<ServicoExecutado> {
+    const entity = this.create({ atestadoId, ...input, itemKey: `manual::${randomUUID()}`, quantidadeRaw: input.quantidade === undefined ? undefined : String(input.quantidade), extractionMethod: 'MANUAL', manualOverride: true, baixaConfianca: false });
+    return (await this.save(entity)) as ServicoExecutado;
+  }
+
+  async updateManual(atestadoId: string, id: string, input: ManualServicoInput): Promise<ServicoExecutado | null> {
+    const service = await this.findOne({ where: { id, atestadoId } });
+    if (!service) return null;
+    Object.assign(service, { ...input, quantidadeRaw: input.quantidade === undefined ? undefined : String(input.quantidade), extractionMethod: 'MANUAL', manualOverride: true, baixaConfianca: false });
+    return (await this.save(service)) as ServicoExecutado;
+  }
+
   async upsertMany(rows: ServicoExecutadoRow[]): Promise<void> {
     if (rows.length === 0) return;
+    const manualKeys = new Set((await this.query<{ item_key: string }>('SELECT item_key FROM servicos_executados WHERE atestado_id = $1 AND manual_override = true', [rows[0].atestadoId])).map((row) => row.item_key));
+    const automaticRows = rows.filter((row) => !manualKeys.has(row.itemKey ?? ''));
+    if (automaticRows.length === 0) return;
     await this.createQueryBuilder('s')
       .insert()
       .into(ServicoExecutado)
-      .values(rows as any[])
+      .values(automaticRows as any[])
       .orUpdate(
         ['descricao', 'unidade', 'unit_id', 'unit_symbol_raw', 'normalized_service_key', 'quantidade', 'quantidade_raw', 'categoria', 'obra_id', 'extraction_method', 'extraction_version', 'baixa_confianca'],
         ['atestado_id', 'item_key'],
