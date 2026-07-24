@@ -13,12 +13,13 @@ export function parseNumeroBR(value?: string | null, unitSymbol?: string | null)
   const numeric = unit
     ? knownUnitStripped.replace(new RegExp(escapeRegex(unit) + '\\.?$', 'i'), '')
     : knownUnitStripped;
-  if (/^-?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?$/.test(numeric)) {
-    const parsed = Number(numeric.replace(/\./g, '').replace(',', '.'));
+  const repairedNumeric = repairRepeatedCommaQuantity(numeric);
+  if (/^-?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?$/.test(repairedNumeric)) {
+    const parsed = Number(repairedNumeric.replace(/\./g, '').replace(',', '.'));
     return Number.isFinite(parsed) ? parsed : undefined;
   }
-  if (/^-?\d+\.\d{1,2}$/.test(numeric)) {
-    const parsed = Number(numeric);
+  if (/^-?\d+\.\d{1,6}$/.test(repairedNumeric)) {
+    const parsed = Number(repairedNumeric);
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
@@ -26,4 +27,12 @@ export function parseNumeroBR(value?: string | null, unitSymbol?: string | null)
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
+}
+
+function repairRepeatedCommaQuantity(value: string): string {
+  // OCR may turn a Brazilian thousands dot into a comma, e.g. 91,488,00.
+  // Only repair full 3-digit groups followed by one final decimal group.
+  if (!/^-?\d{1,3}(?:,\d{3})+,\d{1,6}$/.test(value)) return value;
+  const decimalIndex = value.lastIndexOf(',');
+  return value.slice(0, decimalIndex).replace(/,/g, '') + '.' + value.slice(decimalIndex + 1);
 }
