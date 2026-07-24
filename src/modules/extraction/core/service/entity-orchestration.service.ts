@@ -137,7 +137,7 @@ export class EntityOrchestrationService {
 
       for (const service of tabelaServicos) {
         const rawQuantity = service.quantidadeRaw ?? (service.quantidade !== undefined ? String(service.quantidade) : undefined);
-        const quantity = rawQuantity === undefined ? undefined : parseNumeroBR(rawQuantity);
+        const quantity = rawQuantity === undefined ? undefined : parseNumeroBR(rawQuantity, service.unidade);
         const category = this.normalizeCategory(service.categoria);
         const invalidQuantity = rawQuantity !== undefined && quantity === undefined;
         const baixaConfianca = Boolean(service.baixaConfianca) || invalidQuantity || category === 'SEM_CATEGORIA';
