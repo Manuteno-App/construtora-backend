@@ -15,6 +15,7 @@ import { MEASUREMENTS_API } from './public-api/interface/measurements-api.interf
 import { MeasurementsService } from './core/service/measurements.service';
 import { UnitNormalizationService } from './core/service/unit-normalization.service';
 import { MeasurementsAdminController } from './http/rest/controller/measurements-admin.controller';
+import { MeasurementsController } from './http/rest/controller/measurements.controller';
 
 @Module({
   imports: [
@@ -36,6 +37,6 @@ import { MeasurementsAdminController } from './http/rest/controller/measurements
     MeasurementsFacade,
     { provide: MEASUREMENTS_API, useExisting: MeasurementsFacade },
   ],
-  controllers: [MeasurementsAdminController],
+  controllers: [MeasurementsAdminController, MeasurementsController],
 })
 export class MeasurementsModule {}

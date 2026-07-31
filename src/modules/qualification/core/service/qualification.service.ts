@@ -70,9 +70,15 @@ export class QualificationService {
   async resolveDescricoes(query: string): Promise<ResolvedDescricao[]> {
     const ilikePat = `%${query.trim()}%`;
     try {
-      const rows = await this.dataSource.query<{ descricao: string; score: string }[]>(
+      const rows = await this.dataSource.query<{ descricao: string; score: string; unidadeSugerida: string | null }[]>(
         `SELECT DISTINCT s.descricao,
-           COALESCE(ts_rank(s.descricao_tsv, plainto_tsquery('portuguese', $1)), 0) AS score
+           COALESCE(ts_rank(s.descricao_tsv, plainto_tsquery('portuguese', $1)), 0) AS score,
+           (SELECT s2.unidade
+              FROM servicos_executados s2
+             WHERE s2.descricao = s.descricao AND s2.unidade IS NOT NULL
+             GROUP BY s2.unidade
+             ORDER BY COUNT(*) DESC, s2.unidade
+             LIMIT 1) AS "unidadeSugerida"
          FROM servicos_executados s
          WHERE s.descricao_tsv @@ plainto_tsquery('portuguese', $1)
             OR UPPER(s.descricao) LIKE UPPER($2)
@@ -80,14 +86,18 @@ export class QualificationService {
          LIMIT 30`,
         [query.trim(), ilikePat],
       );
-      return rows.map((r) => ({ descricao: r.descricao, score: parseFloat(r.score) }));
+      return rows.map((r) => ({ descricao: r.descricao, score: parseFloat(r.score), unidadeSugerida: r.unidadeSugerida ?? undefined }));
     } catch {
       this.logger.warn('FTS column unavailable, falling back to ILIKE-only for resolveDescricoes');
-      const rows = await this.dataSource.query<{ descricao: string }[]>(
-        `SELECT DISTINCT s.descricao FROM servicos_executados s WHERE UPPER(s.descricao) LIKE UPPER($1) LIMIT 30`,
+      const rows = await this.dataSource.query<{ descricao: string; unidadeSugerida: string | null }[]>(
+        `SELECT DISTINCT s.descricao,
+           (SELECT s2.unidade FROM servicos_executados s2
+             WHERE s2.descricao = s.descricao AND s2.unidade IS NOT NULL
+             GROUP BY s2.unidade ORDER BY COUNT(*) DESC, s2.unidade LIMIT 1) AS "unidadeSugerida"
+         FROM servicos_executados s WHERE UPPER(s.descricao) LIKE UPPER($1) LIMIT 30`,
         [ilikePat],
       );
-      return rows.map((r) => ({ descricao: r.descricao, score: 0 }));
+      return rows.map((r) => ({ descricao: r.descricao, score: 0, unidadeSugerida: r.unidadeSugerida ?? undefined }));
     }
   }
 
@@ -314,7 +324,7 @@ export class QualificationService {
       };
     }
 
-    if (bundleMode === 'ONE') return this.evaluateGlobalSingleBundle(services, filters);
+    if (bundleMode === 'ONE') return this.evaluateGlobalOneAtestado(services, filters);
     if (bundleMode === 'MAX') return this.evaluateGlobalMaxBundle(services, filters, maxAtestados ?? 1);
     return this.evaluatePerServiceBundle(services, filters);
   }
@@ -395,6 +405,54 @@ export class QualificationService {
       usedAtestadosCount: selectedAtestados.length,
       coverageByService,
       fullyQualified: bundle.fullyQualified,
+      exceededMaxAtestados: false,
+    };
+  }
+
+  /** A politica ONE aceita somente um documento que atenda todos os criterios. */
+  private async evaluateGlobalOneAtestado(
+    services: ServiceRequirement[],
+    filters?: QualificationFilters,
+  ): Promise<BundleEvaluationResult> {
+    const coverages = await Promise.all(services.map(async (service) => {
+      const resolvedDescricoes = await this.resolveTopDescricoes(service.query);
+      const qualifyingAtestados = service.minQuantidade !== undefined
+        ? await this.findAtestadosComQuantidadeMinima(resolvedDescricoes, service.minQuantidade, service.unidade, filters)
+        : await this.findAtestadosComServico(resolvedDescricoes, filters);
+      return { service, resolvedDescricoes, qualifyingAtestados };
+    }));
+
+    const candidateIds = coverages.reduce<Set<string> | null>((common, coverage) => {
+      const ids = new Set(coverage.qualifyingAtestados.map((item) => item.atestadoId));
+      return common === null ? ids : new Set([...common].filter((id) => ids.has(id)));
+    }, null) ?? new Set<string>();
+    const selectedAtestado = coverages.flatMap((coverage) => coverage.qualifyingAtestados)
+      .find((item) => candidateIds.has(item.atestadoId));
+    const selectedIds = selectedAtestado ? new Set([selectedAtestado.atestadoId]) : new Set<string>();
+
+    const coverageByService: ServiceCoverage[] = coverages.map((coverage) => {
+      const selectedAtestados = coverage.qualifyingAtestados.filter((item) => selectedIds.has(item.atestadoId));
+      const covered = selectedAtestados.length > 0;
+      return {
+        serviceQuery: coverage.service.query,
+        resolvedDescricoes: coverage.resolvedDescricoes,
+        qualifyingAtestados: coverage.qualifyingAtestados,
+        selectedAtestados,
+        usedAtestadosCount: selectedAtestados.length,
+        proofModeApplied: 'ONE',
+        withinLimit: covered,
+        qualified: covered,
+        failureReason: covered ? undefined : this.getFailureReasonFromData(coverage.qualifyingAtestados),
+        covered,
+      };
+    });
+
+    return {
+      bundleModeApplied: 'ONE',
+      selectedAtestados: selectedAtestado ? [selectedAtestado] : [],
+      usedAtestadosCount: selectedAtestado ? 1 : 0,
+      coverageByService,
+      fullyQualified: Boolean(selectedAtestado),
       exceededMaxAtestados: false,
     };
   }
