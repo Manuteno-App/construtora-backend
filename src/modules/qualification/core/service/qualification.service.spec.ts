@@ -131,4 +131,51 @@ describe('QualificationService.evaluateBundlePolicy', () => {
     expect(coverage.failureReason).toBe('MAX_ATESTADOS_EXCEEDED');
     expect(coverage.usedAtestadosCount).toBe(3);
   });
+
+  it('returns every document that satisfies a ONE conjunction', async () => {
+    jest.spyOn(service, 'findCumulativoAtestados').mockImplementation(async (descricoes: string[], minQty: number) => ({
+      atestados: descricoes[0] === 'Servico A'
+        ? [makeSource('A1', 10), makeSource('A2', 12)]
+        : [makeSource('A1', 10), makeSource('A2', 11), makeSource('A3', 20)],
+      totalQuantidade: 42,
+      meetsMinimum: true,
+      minQuantidade: minQty,
+    }));
+
+    const result = await service.evaluateBundlePolicy({
+      bundleMode: 'ONE',
+      services: [
+        { criterionKey: 'a', query: 'Servico A', minQuantidade: 10 },
+        { criterionKey: 'b', query: 'Servico B', minQuantidade: 10 },
+      ],
+    });
+
+    expect(result.fullyQualified).toBe(true);
+    expect(result.conjunctionCandidateCount).toBe(2);
+    expect(result.candidateAtestados?.map((item) => item.atestadoId)).toEqual(['A1', 'A2']);
+    expect(result.bestCandidateCoverageCount).toBe(2);
+    expect(result.coverageByService.map((item) => item.criterionKey)).toEqual(['a', 'b']);
+  });
+
+  it('keeps quantity found in ONE as partial instead of no matches', async () => {
+    jest.spyOn(service, 'findCumulativoAtestados').mockResolvedValue({
+      atestados: [makeSource('A1', 5)],
+      totalQuantidade: 5,
+      meetsMinimum: false,
+      minQuantidade: 10,
+    });
+
+    const result = await service.evaluateBundlePolicy({
+      bundleMode: 'ONE',
+      services: [{ criterionKey: 'partial', query: 'Servico parcial', minQuantidade: 10 }],
+    });
+
+    const coverage = result.coverageByService[0];
+    expect(result.fullyQualified).toBe(false);
+    expect(result.conjunctionCandidateCount).toBe(0);
+    expect(coverage.failureReason).toBe('INSUFFICIENT_QUANTITY');
+    expect(coverage.matchingAtestadosCount).toBe(1);
+    expect(coverage.availableTotalQuantidade).toBe(5);
+    expect(coverage.selectedTotalQuantidade).toBe(0);
+  });
 });

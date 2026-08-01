@@ -9,6 +9,7 @@ export class QualificationFiltersDto {
 }
 
 export class ServiceRequirementDto {
+  @IsOptional() @IsString() criterionKey?: string;
   @IsString() query!: string;
   @IsOptional() @IsNumber() @Min(0) minQuantidade?: number;
   @IsOptional() @IsString() unidade?: string;

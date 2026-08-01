@@ -59,6 +59,9 @@ interface MatchingServiceRow {
   matchType: ServiceMatchType;
   matchRank: number;
   normalizedServiceKey: string | null;
+  itemCode: string | null;
+  pageNumber: number | null;
+  baixaConfianca: boolean;
 }
 
 @Injectable()
@@ -189,12 +192,12 @@ export class QualificationService {
       }),
     );
 
-    // For each service, find qualifying atestados
+    // Retain every match so a global set may sum partial quantities.
     const perServiceAtestados: { query: string; atestados: QualificationSource[] }[] = [];
     for (const svc of resolvedServices) {
       const atestados =
         svc.minQuantidade !== undefined
-          ? await this.findAtestadosComQuantidadeMinima(svc.resolvedDescricoes, svc.minQuantidade, svc.unidade, filters)
+          ? (await this.findCumulativoAtestados(svc.resolvedDescricoes, svc.minQuantidade, svc.unidade, filters)).atestados
           : await this.findAtestadosComServico(svc.resolvedDescricoes, filters);
       perServiceAtestados.push({ query: svc.query, atestados });
     }
@@ -230,23 +233,46 @@ export class QualificationService {
       for (const q of atestadoCoverage.get(bestId)!) uncovered.delete(q);
     }
 
-    // Compute per-service coverage after selection
-    const coveredBySelection = new Set<string>();
-    for (const [id] of selected) {
-      for (const q of atestadoCoverage.get(id) ?? []) coveredBySelection.add(q);
+    // Complete quantities with documents from the same global set.
+    for (let index = 0; index < resolvedServices.length; index++) {
+      const requirement = resolvedServices[index];
+      if (requirement.minQuantidade === undefined) continue;
+      const sources = perServiceAtestados[index].atestados;
+      let total = sources
+        .filter((source) => selected.has(source.atestadoId))
+        .reduce((sum, source) => sum + this.sourceQuantity(source), 0);
+      for (const source of sources) {
+        if (total >= requirement.minQuantidade) break;
+        if (selected.has(source.atestadoId)) continue;
+        selected.set(source.atestadoId, source);
+        total += this.sourceQuantity(source);
+      }
     }
 
-    const coverageByService: ServiceCoverage[] = resolvedServices.map((svc, i) => ({
-      serviceQuery: svc.query,
-      resolvedDescricoes: svc.resolvedDescricoes,
-      qualifyingAtestados: perServiceAtestados[i].atestados,
-      covered: coveredBySelection.has(svc.query),
-    }));
+    // Compute per-service coverage after selection
+    const coverageByService: ServiceCoverage[] = resolvedServices.map((svc, i) => {
+      const matchingAtestados = perServiceAtestados[i].atestados;
+      const selectedAtestados = matchingAtestados.filter((source) => selected.has(source.atestadoId));
+      const selectedTotal = selectedAtestados.reduce((sum, source) => sum + this.sourceQuantity(source), 0);
+      const covered = svc.minQuantidade === undefined
+        ? selectedAtestados.length > 0
+        : selectedTotal >= svc.minQuantidade;
+      return {
+        serviceQuery: svc.query,
+        resolvedDescricoes: svc.resolvedDescricoes,
+        matchingAtestados,
+        qualifyingAtestados: matchingAtestados,
+        selectedAtestados,
+        totalQuantidade: selectedTotal,
+        quantidadeExigida: svc.minQuantidade,
+        covered,
+      };
+    });
 
     return {
       minimumSet: [...selected.values()],
       coverageByService,
-      fullyQualified: uncovered.size === 0,
+      fullyQualified: coverageByService.every((coverage) => coverage.covered),
     };
   }
 
@@ -294,10 +320,11 @@ export class QualificationService {
   }
 
   async evaluateBundlePolicy(request: BundleEvaluationRequest): Promise<BundleEvaluationResult> {
+    const startedAt = Date.now();
     const { bundleMode, maxAtestados, services, filters } = request;
-
+    let result: BundleEvaluationResult;
     if (services.length === 0) {
-      return {
+      result = {
         bundleModeApplied: bundleMode,
         maxAtestados,
         selectedAtestados: [],
@@ -306,11 +333,95 @@ export class QualificationService {
         fullyQualified: false,
         exceededMaxAtestados: false,
       };
+    } else if (bundleMode === 'ONE') {
+      result = await this.evaluateGlobalOneAtestado(services, filters);
+    } else if (bundleMode === 'MAX') {
+      result = await this.evaluateGlobalMaxBundle(services, filters, maxAtestados ?? 1);
+    } else {
+      result = await this.evaluatePerServiceBundle(services, filters);
     }
 
-    if (bundleMode === 'ONE') return this.evaluateGlobalOneAtestado(services, filters);
-    if (bundleMode === 'MAX') return this.evaluateGlobalMaxBundle(services, filters, maxAtestados ?? 1);
-    return this.evaluatePerServiceBundle(services, filters);
+    return this.enrichEvaluationResult(result, services, startedAt);
+  }
+
+  private async enrichEvaluationResult(
+    result: BundleEvaluationResult,
+    requirements: ServiceRequirement[],
+    startedAt: number,
+  ): Promise<BundleEvaluationResult> {
+    const documentCriteria = new Map<string, Set<string>>();
+    const coverageByService = result.coverageByService.map((coverage, index) => {
+      const requirement = requirements[index];
+      const matching = coverage.matchingAtestados ?? coverage.qualifyingAtestados;
+      const selectedIds = new Set((coverage.selectedAtestados ?? []).map((source) => source.atestadoId));
+      const decorated = matching.map((source) => {
+        const sourceQuantity = this.sourceQuantity(source);
+        const used = selectedIds.has(source.atestadoId);
+        const hasApproximation = (source.servicos ?? []).some((service) => service.conversionKind === 'TECHNICAL');
+        const hasCaveat = hasApproximation || (source.servicos ?? []).some((service) => service.matchConfidence === 'MEDIUM');
+        const meetsAlone = requirement?.minQuantidade === undefined || sourceQuantity >= requirement.minQuantidade;
+        const selectionRole = used
+          ? hasApproximation
+            ? 'USED_WITH_APPROXIMATION' as const
+            : meetsAlone
+              ? 'MEETS_ALONE' as const
+              : 'USED_IN_SUM' as const
+          : 'AVAILABLE_UNUSED' as const;
+        const key = requirement?.criterionKey ?? coverage.serviceQuery;
+        if (!documentCriteria.has(source.atestadoId)) documentCriteria.set(source.atestadoId, new Set());
+        documentCriteria.get(source.atestadoId)!.add(key);
+        return { ...source, selectionRole, hasCaveat };
+      });
+      const decoratedById = new Map(decorated.map((source) => [source.atestadoId, source]));
+      const selectedAtestados = (coverage.selectedAtestados ?? []).map(
+        (source) => decoratedById.get(source.atestadoId) ?? source,
+      );
+      const qualifyingAtestados = coverage.qualifyingAtestados.map(
+        (source) => decoratedById.get(source.atestadoId) ?? source,
+      );
+      const selectedTotalQuantidade = selectedAtestados.reduce((sum, source) => sum + this.sourceQuantity(source), 0);
+      const availableTotalQuantidade = matching.reduce((sum, source) => sum + this.sourceQuantity(source), 0);
+      return {
+        ...coverage,
+        criterionKey: requirement?.criterionKey,
+        matchingAtestados: decorated,
+        qualifyingAtestados,
+        selectedAtestados,
+        selectedTotalQuantidade,
+        availableTotalQuantidade,
+        matchingAtestadosCount: decorated.length,
+        totalQuantidade: selectedTotalQuantidade,
+      };
+    });
+
+    const matchingIds = new Set(
+      coverageByService.flatMap((coverage) => (coverage.matchingAtestados ?? []).map((source) => source.atestadoId)),
+    );
+    let totalAtestadosBase: number | undefined;
+    try {
+      const rows = await this.dataSource.query<Array<{ total: string }>>(
+        `SELECT COUNT(*)::text AS total FROM atestados WHERE status = 'DONE'`,
+      );
+      if (Array.isArray(rows) && rows[0]) totalAtestadosBase = Number(rows[0].total);
+    } catch {
+      this.logger.warn('Unable to collect qualification result metadata');
+    }
+    const bestCandidateCoverageCount = Math.max(0, ...[...documentCriteria.values()].map((criteria) => criteria.size));
+    return {
+      ...result,
+      coverageByService,
+      bestCandidateCoverageCount,
+      totalAtestadosBase,
+      matchingAtestadosCount: matchingIds.size,
+      elapsedMs: Date.now() - startedAt,
+    };
+  }
+
+  private sourceQuantity(source: QualificationSource): number {
+    return (source.servicos ?? []).reduce(
+      (sum, service) => sum + (service.quantidadeConvertida ?? service.quantidade ?? 0),
+      0,
+    );
   }
 
   async getAtestadoDetails(atestadoId: string): Promise<AtestadoDetailsRow | null> {
@@ -400,18 +511,24 @@ export class QualificationService {
   ): Promise<BundleEvaluationResult> {
     const coverages = await Promise.all(services.map(async (service) => {
       const resolvedDescricoes = [service.query];
-      const qualifyingAtestados = service.minQuantidade !== undefined
-        ? await this.findAtestadosComQuantidadeMinima(resolvedDescricoes, service.minQuantidade, service.unidade, filters)
+      const matchingAtestados = service.minQuantidade !== undefined
+        ? (await this.findCumulativoAtestados(resolvedDescricoes, service.minQuantidade, service.unidade, filters)).atestados
         : await this.findAtestadosComServico(resolvedDescricoes, filters);
-      return { service, resolvedDescricoes, qualifyingAtestados };
+      const qualifyingAtestados = service.minQuantidade !== undefined
+        ? matchingAtestados.filter((source) => this.sourceQuantity(source) >= service.minQuantidade!)
+        : matchingAtestados;
+      return { service, resolvedDescricoes, matchingAtestados, qualifyingAtestados };
     }));
 
     const candidateIds = coverages.reduce<Set<string> | null>((common, coverage) => {
       const ids = new Set(coverage.qualifyingAtestados.map((item) => item.atestadoId));
       return common === null ? ids : new Set([...common].filter((id) => ids.has(id)));
     }, null) ?? new Set<string>();
-    const selectedAtestado = coverages.flatMap((coverage) => coverage.qualifyingAtestados)
-      .find((item) => candidateIds.has(item.atestadoId));
+    const candidateAtestados = this.dedupeSources(
+      coverages.flatMap((coverage) => coverage.qualifyingAtestados)
+        .filter((item) => candidateIds.has(item.atestadoId)),
+    );
+    const selectedAtestado = candidateAtestados[0];
     const selectedIds = selectedAtestado ? new Set([selectedAtestado.atestadoId]) : new Set<string>();
 
     const coverageByService: ServiceCoverage[] = coverages.map((coverage) => {
@@ -421,12 +538,15 @@ export class QualificationService {
         serviceQuery: coverage.service.query,
         resolvedDescricoes: coverage.resolvedDescricoes,
         qualifyingAtestados: coverage.qualifyingAtestados,
+        matchingAtestados: coverage.matchingAtestados,
         selectedAtestados,
         usedAtestadosCount: selectedAtestados.length,
         proofModeApplied: 'ONE',
         withinLimit: covered,
         qualified: covered,
-        failureReason: covered ? undefined : this.getFailureReasonFromData(coverage.qualifyingAtestados),
+        failureReason: covered
+          ? undefined
+          : this.getFailureReasonFromData(coverage.matchingAtestados, coverage.matchingAtestados.reduce((sum, source) => sum + this.sourceQuantity(source), 0)),
         covered,
       };
     });
@@ -436,6 +556,8 @@ export class QualificationService {
       selectedAtestados: selectedAtestado ? [selectedAtestado] : [],
       usedAtestadosCount: selectedAtestado ? 1 : 0,
       coverageByService,
+      candidateAtestados,
+      conjunctionCandidateCount: candidateAtestados.length,
       fullyQualified: Boolean(selectedAtestado),
       exceededMaxAtestados: false,
     };
@@ -816,6 +938,13 @@ export class QualificationService {
          s.unidade,
          s.unit_id AS "unitId",
          s.normalized_service_key AS "normalizedServiceKey",
+         s.codigo AS "itemCode",
+         s.baixa_confianca AS "baixaConfianca",
+         (SELECT ch.page_number
+            FROM chunks ch
+           WHERE ch.atestado_id = a.id
+             AND ch.content ILIKE '%' || LEFT(s.descricao, 80) || '%'
+           ORDER BY ch.page_number NULLS LAST LIMIT 1) AS "pageNumber",
          CASE
            WHEN (${exactConditions}) THEN 'EXATA'
            WHEN (${termsConditions}) THEN 'POR_TERMOS'
@@ -894,6 +1023,9 @@ export class QualificationService {
         unidadeComparada: unidadeComparada ?? targetUnitSymbol ?? row.unidade ?? undefined,
         conversionKind,
         conversionFactor,
+        itemCode: row.itemCode ?? undefined,
+        pageNumber: row.pageNumber ?? undefined,
+        matchConfidence: row.baixaConfianca || row.matchType === 'TEXTUAL_FORTE' ? 'MEDIUM' : 'HIGH',
       });
     }
 
