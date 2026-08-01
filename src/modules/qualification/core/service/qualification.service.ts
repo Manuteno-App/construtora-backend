@@ -12,6 +12,7 @@ import {
   QualificationSource,
   ResolvedDescricao,
   ServiceCoverage,
+  ServiceMatchType,
   ServiceRequirement,
   ServicoBuscado,
 } from '../../public-api/interface/qualification-api.interface';
@@ -55,6 +56,8 @@ interface MatchingServiceRow {
   quantidade: string | null;
   unidade: string | null;
   unitId: string | null;
+  matchType: ServiceMatchType;
+  matchRank: number;
   normalizedServiceKey: string | null;
 }
 
@@ -66,6 +69,15 @@ export class QualificationService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly measurements: MeasurementsService,
   ) {}
+
+  private normalizeSearchText(value: string): string {
+    return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+  }
+
+  private getRelevantSearchTerms(normalizedQuery: string): string[] {
+    const stopWords = new Set(['a', 'as', 'com', 'da', 'das', 'de', 'do', 'dos', 'e', 'em', 'na', 'nas', 'no', 'nos', 'o', 'os', 'para', 'por', 'um', 'uma']);
+    return [...new Set(normalizedQuery.split(' ').filter((term) => !stopWords.has(term) && (term.length > 1 || /^\d$/.test(term))))];
+  }
 
   async resolveDescricoes(query: string): Promise<ResolvedDescricao[]> {
     const ilikePat = `%${query.trim()}%`;
@@ -107,37 +119,11 @@ export class QualificationService {
   ): Promise<QualificationSource[]> {
     if (descricoes.length === 0) return [];
 
-    const params: unknown[] = [];
-    const ilikeConds = descricoes.map((d) => {
-      params.push(`%${d}%`);
-      return `UPPER(s.descricao) LIKE UPPER($${params.length})`;
-    });
-    const filterClauses = this.buildFilterClauses(filters, params);
-    const whereParts = [`(${ilikeConds.join(' OR ')})`, ...filterClauses];
-
-    const rows = await this.dataSource.query<QualificationSourceRow[]>(
-      `SELECT
-         a.id AS "atestadoId",
-         a.original_filename AS filename,
-         MAX(o.nome) AS "obraNome",
-         MAX(o.local) AS local,
-         MIN(o.data_inicio::text) AS "dataInicio",
-         MAX(o.data_fim::text) AS "dataFim",
-         MAX(o.valor) AS valor,
-         (SELECT c.numero FROM contratos c
-          INNER JOIN obras o2 ON o2.id = c.obra_id
-          WHERE o2.atestado_id = a.id LIMIT 1) AS "contratoNumero"
-       FROM servicos_executados s
-       JOIN atestados a ON a.id = s.atestado_id AND a.status = 'DONE'
-       LEFT JOIN obras o ON o.id = s.obra_id
-       WHERE ${whereParts.join(' AND ')}
-       GROUP BY a.id, a.original_filename
-       ORDER BY a.original_filename`,
-      params,
-    );
-    const sources = this.mapRows(rows);
-    const servicosMap = await this.fetchServicosParaAtestados(sources.map((s) => s.atestadoId), descricoes);
-    return sources.map((s) => ({ ...s, servicos: servicosMap.get(s.atestadoId) ?? [] }));
+    const rows = await this.fetchMatchingServiceRows(descricoes, filters);
+    return (await this.aggregateRowsByAtestado(rows)).map((item) => ({
+      ...item.source,
+      servicos: item.servicos,
+    }));
   }
 
   async findAtestadosComQuantidadeMinima(
@@ -194,13 +180,11 @@ export class QualificationService {
     // Resolve descriptions for each service
     const resolvedServices = await Promise.all(
       services.map(async (svc) => {
-        const resolved = await this.resolveDescricoes(svc.query);
-        const topDescricoes = resolved.slice(0, 5).map((r) => r.descricao);
         return {
           query: svc.query,
           minQuantidade: svc.minQuantidade,
           unidade: svc.unidade,
-          resolvedDescricoes: topDescricoes.length > 0 ? topDescricoes : [svc.query],
+          resolvedDescricoes: [svc.query],
         };
       }),
     );
@@ -415,7 +399,7 @@ export class QualificationService {
     filters?: QualificationFilters,
   ): Promise<BundleEvaluationResult> {
     const coverages = await Promise.all(services.map(async (service) => {
-      const resolvedDescricoes = await this.resolveTopDescricoes(service.query);
+      const resolvedDescricoes = [service.query];
       const qualifyingAtestados = service.minQuantidade !== undefined
         ? await this.findAtestadosComQuantidadeMinima(resolvedDescricoes, service.minQuantidade, service.unidade, filters)
         : await this.findAtestadosComServico(resolvedDescricoes, filters);
@@ -517,7 +501,7 @@ export class QualificationService {
     service: ServiceRequirement,
     filters?: QualificationFilters,
   ): Promise<ServiceCoverage> {
-    const resolvedDescricoes = await this.resolveTopDescricoes(service.query);
+    const resolvedDescricoes = [service.query];
     const proofMode = service.proofMode ?? 'MANY';
 
     if (proofMode === 'ONE') {
@@ -654,9 +638,7 @@ export class QualificationService {
   }
 
   private async resolveTopDescricoes(query: string): Promise<string[]> {
-    const resolved = await this.resolveDescricoes(query);
-    const topDescricoes = resolved.slice(0, 5).map((r) => r.descricao);
-    return topDescricoes.length > 0 ? topDescricoes : [query];
+    return [query];
   }
 
   private pickMinimumSourcesForQuantity(
@@ -756,12 +738,44 @@ export class QualificationService {
     filters?: QualificationFilters,
   ): Promise<MatchingServiceRow[]> {
     const params: unknown[] = [];
-    const ilikeConds = descricoes.map((d) => {
-      params.push(`%${d}%`);
-      return `UPPER(s.descricao) LIKE UPPER($${params.length})`;
-    });
+    const normalizedDescriptionSql = `regexp_replace(
+      lower(
+        translate(
+          s.descricao,
+          U&'\\00C1\\00C0\\00C2\\00C3\\00C4\\00E1\\00E0\\00E2\\00E3\\00E4\\00C9\\00C8\\00CA\\00CB\\00E9\\00E8\\00EA\\00EB\\00CD\\00CC\\00CE\\00CF\\00ED\\00EC\\00EE\\00EF\\00D3\\00D2\\00D4\\00D5\\00D6\\00F3\\00F2\\00F4\\00F5\\00F6\\00DA\\00D9\\00DB\\00DC\\00FA\\00F9\\00FB\\00FC\\00C7\\00E7',
+          'AAAAAaaaaaEEEEeeeeIIIIiiiiOOOOOoooooUUUUuuuuCc'
+        )
+      ),
+      '[^a-z0-9]+', ' ', 'g'
+    )`;
+
+    const matches: Array<{ exact: string; terms: string; textual: string }> = [];
+    for (const descricao of descricoes) {
+      const normalizedQuery = this.normalizeSearchText(descricao);
+      const terms = this.getRelevantSearchTerms(normalizedQuery);
+      if (!normalizedQuery || terms.length === 0) continue;
+
+      params.push(normalizedQuery);
+      const exact = `trim(${normalizedDescriptionSql}) = $${params.length}`;
+      const termConditions: string[] = [];
+      for (const term of terms) {
+        params.push(`% ${term} %`);
+        termConditions.push(`concat(' ', ${normalizedDescriptionSql}, ' ') LIKE $${params.length}`);
+      }
+      params.push(descricao.trim());
+      matches.push({
+        exact,
+        terms: `(${termConditions.join(' AND ')})`,
+        textual: `s.descricao_tsv @@ plainto_tsquery('portuguese', $${params.length})`,
+      });
+    }
+
+    if (matches.length === 0) return [];
+    const exactConditions = matches.map((match) => match.exact).join(' OR ');
+    const termsConditions = matches.map((match) => match.terms).join(' OR ');
+    const textualConditions = matches.map((match) => match.textual).join(' OR ');
     const filterClauses = this.buildFilterClauses(filters, params);
-    const whereParts = [`(${ilikeConds.join(' OR ')})`, ...filterClauses];
+    const whereParts = [`((${exactConditions}) OR (${termsConditions}) OR (${textualConditions}))`, ...filterClauses];
 
     return this.dataSource.query<MatchingServiceRow[]>(
       `SELECT
@@ -779,17 +793,27 @@ export class QualificationService {
          s.quantidade,
          s.unidade,
          s.unit_id AS "unitId",
-         s.normalized_service_key AS "normalizedServiceKey"
+         s.normalized_service_key AS "normalizedServiceKey",
+         CASE
+           WHEN (${exactConditions}) THEN 'EXATA'
+           WHEN (${termsConditions}) THEN 'POR_TERMOS'
+           ELSE 'TEXTUAL_FORTE'
+         END AS "matchType",
+         CASE
+           WHEN (${exactConditions}) THEN 3
+           WHEN (${termsConditions}) THEN 2
+           ELSE 1
+         END AS "matchRank"
        FROM servicos_executados s
        JOIN atestados a ON a.id = s.atestado_id AND a.status = 'DONE'
        LEFT JOIN obras o ON o.id = s.obra_id
        WHERE ${whereParts.join(' AND ')}
        GROUP BY a.id, a.original_filename, s.id
-       ORDER BY a.original_filename, s.descricao`,
+       ORDER BY "matchRank" DESC, a.original_filename, s.descricao`,
       params,
     );
-  }
 
+  }
   private async aggregateRowsByAtestado(
     rows: MatchingServiceRow[],
     targetUnitSymbol?: string,
@@ -839,6 +863,7 @@ export class QualificationService {
       item.totalQuantidade += convertedQuantity ?? 0;
       item.servicos.push({
         descricao: row.descricao,
+        matchType: row.matchType,
         quantidade: quantity,
         unidade: row.unidade ?? undefined,
         unitId: row.unitId ?? undefined,

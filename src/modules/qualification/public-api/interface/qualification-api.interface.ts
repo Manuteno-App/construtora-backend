@@ -7,6 +7,7 @@ export interface QualificationFilters {
 
 export interface ServicoBuscado {
   descricao: string;
+  matchType?: ServiceMatchType;
   quantidade?: number;
   unidade?: string;
   unitId?: string;
@@ -16,6 +17,8 @@ export interface ServicoBuscado {
   conversionKind?: 'DIRECT' | 'MATHEMATICAL' | 'TECHNICAL';
   conversionFactor?: number;
 }
+
+export type ServiceMatchType = 'EXATA' | 'POR_TERMOS' | 'TEXTUAL_FORTE';
 
 export interface QualificationSource {
   atestadoId: string;
