@@ -505,23 +505,33 @@ export class QualificationService {
     const proofMode = service.proofMode ?? 'MANY';
 
     if (proofMode === 'ONE') {
-      const qualifyingAtestados =
-        service.minQuantidade !== undefined
-          ? await this.findAtestadosComQuantidadeMinima(resolvedDescricoes, service.minQuantidade, service.unidade, filters)
-          : await this.findAtestadosComServico(resolvedDescricoes, filters);
+      const matchingAtestados = service.minQuantidade !== undefined
+        ? (await this.findCumulativoAtestados(resolvedDescricoes, service.minQuantidade, service.unidade, filters)).atestados
+        : await this.findAtestadosComServico(resolvedDescricoes, filters);
+      const qualifyingAtestados = service.minQuantidade !== undefined
+        ? await this.findAtestadosComQuantidadeMinima(resolvedDescricoes, service.minQuantidade, service.unidade, filters)
+        : matchingAtestados;
       const selectedAtestados = qualifyingAtestados.slice(0, 1);
       const covered = selectedAtestados.length > 0;
+      const bestQuantidade = matchingAtestados.reduce((best, atestado) => Math.max(best, (atestado.servicos ?? []).reduce(
+        (sum, item) => sum + (item.quantidadeConvertida ?? item.quantidade ?? 0), 0,
+      )), 0);
 
       return {
         serviceQuery: service.query,
         resolvedDescricoes,
+        matchingAtestados,
         qualifyingAtestados,
         selectedAtestados,
+        totalQuantidade: service.minQuantidade !== undefined ? bestQuantidade : undefined,
+        quantidadeExigida: service.minQuantidade,
+        percentualCobertura: service.minQuantidade && service.minQuantidade > 0 ? Math.min(100, (bestQuantidade / service.minQuantidade) * 100) : undefined,
+        status: covered ? 'ATENDIDO' : matchingAtestados.length ? 'PARCIAL' : 'NAO_ATENDIDO',
         usedAtestadosCount: selectedAtestados.length,
         proofModeApplied: 'ONE',
         withinLimit: covered,
         qualified: covered,
-        failureReason: covered ? undefined : this.getFailureReasonFromData(qualifyingAtestados, undefined),
+        failureReason: covered ? undefined : matchingAtestados.length ? 'INSUFFICIENT_QUANTITY' : 'NO_MATCHES',
         covered,
       };
     }
