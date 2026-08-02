@@ -45,6 +45,7 @@ interface AtestadoDetailsRow {
 
 interface MatchingServiceRow {
   atestadoId: string;
+  last_reprocessed_at?: string;
   filename: string;
   obraNome: string | null;
   local: string | null;
@@ -1180,6 +1181,7 @@ export class QualificationService {
       `SELECT
          a.id AS "atestadoId",
          a.original_filename AS filename,
+         a.last_reprocessed_at,
          MAX(o.nome) AS "obraNome",
          MAX(o.local) AS local,
          MIN(o.data_inicio::text) AS "dataInicio",
@@ -1262,6 +1264,7 @@ export class QualificationService {
       if (!grouped.has(row.atestadoId)) {
         grouped.set(row.atestadoId, {
           source: {
+            lastReprocessedAt: row.last_reprocessed_at ? new Date(row.last_reprocessed_at) : undefined,
             atestadoId: row.atestadoId,
             filename: row.filename,
             obraNome: row.obraNome ?? '',
