@@ -27,23 +27,39 @@ describe('MeasurementsService', () => {
         .replace(/^ton$/, 't')
         .replace(/litros?/g, 'l');
       if (!base || /^[0-9.,]+$/.test(base)) return '';
-      const quantityAttachedMatch = base.match(/^[0-9]+(?:[.,][0-9]+)?([a-z]+[23]?)$/);
+      const quantityAttachedMatch = base.match(
+        /^[0-9]+(?:[.,][0-9]+)?([a-z]+[23]?)$/,
+      );
       if (quantityAttachedMatch) {
         const candidate = quantityAttachedMatch[1];
         return new Set([
-          'mm', 'cm', 'm', 'km',
-          'g', 'kg', 't',
-          'l', 'ha',
-          'm2', 'km2', 'cm2', 'mm2',
-          'm3', 'cm3', 'mm3',
-        ]).has(candidate) ? candidate : '';
+          'mm',
+          'cm',
+          'm',
+          'km',
+          'g',
+          'kg',
+          't',
+          'l',
+          'ha',
+          'm2',
+          'km2',
+          'cm2',
+          'mm2',
+          'm3',
+          'cm3',
+          'mm3',
+        ]).has(candidate)
+          ? candidate
+          : '';
       }
       if (/[0-9]/.test(base) && !/^(?:mm|cm|m|km)[23]$/.test(base)) return '';
       if (!/^[a-z]+[23]?$/.test(base)) return '';
       return base;
     },
     canonicalize: (value: string) => value,
-    normalizeServiceKey: (value: string) => value.toLowerCase().replace(/\s+/g, '-'),
+    normalizeServiceKey: (value: string) =>
+      value.toLowerCase().replace(/\s+/g, '-'),
     isValidStoredSymbol: (value?: string | null) => {
       if (!value) return false;
       return normalization.normalize(value) === value;
@@ -120,7 +136,9 @@ describe('MeasurementsService', () => {
         targetUnitId: 'u2',
         factor: 1000,
       }),
-    ).rejects.toThrow('Conversões matemáticas só podem existir entre unidades da mesma família');
+    ).rejects.toThrow(
+      'Conversões matemáticas só podem existir entre unidades da mesma família',
+    );
   });
 
   it('cria unidade com família conhecida e origem de usuário por padrão', async () => {
@@ -166,11 +184,13 @@ describe('MeasurementsService', () => {
       familyId: family.id,
     });
 
-    expect(unitsRepo.createEntity).toHaveBeenCalledWith(expect.objectContaining({
-      canonicalSymbol: 'km',
-      normalizedSymbol: 'km',
-      aliasesJson: JSON.stringify([]),
-    }));
+    expect(unitsRepo.createEntity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canonicalSymbol: 'km',
+        normalizedSymbol: 'km',
+        aliasesJson: JSON.stringify([]),
+      }),
+    );
   });
 
   it('exclui unidade existente', async () => {
@@ -184,15 +204,32 @@ describe('MeasurementsService', () => {
   it('falha ao excluir unidade inexistente', async () => {
     unitsRepo.findById.mockResolvedValueOnce(null);
 
-    await expect(service.deleteUnit('missing-unit')).rejects.toThrow('Unit missing-unit não encontrado');
+    await expect(service.deleteUnit('missing-unit')).rejects.toThrow(
+      'Unit missing-unit não encontrado',
+    );
     expect(unitsRepo.deleteById).not.toHaveBeenCalled();
   });
 
   it('oculta unidades persistidas com símbolo numérico inválido na listagem', async () => {
     unitsRepo.list.mockResolvedValueOnce([
-      { id: 'valid', normalizedSymbol: 'km', origin: UnitOrigin.SYSTEM, status: UnitStatus.ACTIVE },
-      { id: 'bad-1', normalizedSymbol: '50km', origin: UnitOrigin.AI, status: UnitStatus.ACTIVE },
-      { id: 'bad-2', normalizedSymbol: '90x2', origin: UnitOrigin.AI, status: UnitStatus.ACTIVE },
+      {
+        id: 'valid',
+        normalizedSymbol: 'km',
+        origin: UnitOrigin.SYSTEM,
+        status: UnitStatus.ACTIVE,
+      },
+      {
+        id: 'bad-1',
+        normalizedSymbol: '50km',
+        origin: UnitOrigin.AI,
+        status: UnitStatus.ACTIVE,
+      },
+      {
+        id: 'bad-2',
+        normalizedSymbol: '90x2',
+        origin: UnitOrigin.AI,
+        status: UnitStatus.ACTIVE,
+      },
     ]);
 
     const items = await service.listUnits();
@@ -251,11 +288,14 @@ describe('MeasurementsService', () => {
     });
 
     expect(technicalRepo.saveEntity).not.toHaveBeenCalled();
-    expect(technicalRepo.updateEntity).toHaveBeenCalledWith('tech-existing', expect.objectContaining({
-      normalizedServiceKey: 'cbuq',
-      sourceUnitId: 'u1',
-      targetUnitId: 'u2',
-    }));
+    expect(technicalRepo.updateEntity).toHaveBeenCalledWith(
+      'tech-existing',
+      expect.objectContaining({
+        normalizedServiceKey: 'cbuq',
+        sourceUnitId: 'u1',
+        targetUnitId: 'u2',
+      }),
+    );
     expect(created.id).toBe('tech-existing');
   });
 
@@ -289,11 +329,14 @@ describe('MeasurementsService', () => {
       status: 'PENDING' as any,
     });
 
-    expect(technicalRepo.updateEntity).toHaveBeenCalledWith('tech-race', expect.objectContaining({
-      normalizedServiceKey: 'cbuq',
-      sourceUnitId: 'u1',
-      targetUnitId: 'u2',
-    }));
+    expect(technicalRepo.updateEntity).toHaveBeenCalledWith(
+      'tech-race',
+      expect.objectContaining({
+        normalizedServiceKey: 'cbuq',
+        sourceUnitId: 'u1',
+        targetUnitId: 'u2',
+      }),
+    );
     expect(created.id).toBe('tech-race');
   });
 
@@ -301,12 +344,15 @@ describe('MeasurementsService', () => {
     technicalRepo.findExisting.mockResolvedValueOnce({ id: 'other-tech' });
 
     await expect(
-      service.createOrUpdateTechnicalConversion({
-        serviceDescription: 'CBUQ',
-        sourceUnitId: 'u1',
-        targetUnitId: 'u2',
-        factor: 2.35,
-      }, 'tech-1'),
+      service.createOrUpdateTechnicalConversion(
+        {
+          serviceDescription: 'CBUQ',
+          sourceUnitId: 'u1',
+          targetUnitId: 'u2',
+          factor: 2.35,
+        },
+        'tech-1',
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -358,5 +404,32 @@ describe('MeasurementsService', () => {
     expect(resolved.unitId).toBe('km-unit');
     expect(resolved.canonicalSymbol).toBe('km');
     expect(resolved.normalizedSymbol).toBe('km');
+  });
+  it('uses a pending technical conversion as an approximate estimate', async () => {
+    unitsRepo.findByNormalizedOrAlias.mockResolvedValueOnce({
+      id: 'target',
+      canonicalSymbol: 'm3',
+    });
+    conversionsRepo.findByPair.mockResolvedValueOnce(null);
+    technicalRepo.findApprovedByKeyAndPair.mockResolvedValueOnce({
+      factor: 0.42,
+      status: 'PENDING',
+    });
+
+    const result = await service.convertQuantity({
+      quantity: 10,
+      sourceUnitId: 'source',
+      targetUnitSymbol: 'm3',
+      normalizedServiceKey: 'cbuq',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        convertedQuantity: 4.2,
+        conversionKind: 'TECHNICAL',
+        conversionFactor: 0.42,
+      }),
+    );
   });
 });

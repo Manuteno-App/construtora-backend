@@ -16,6 +16,10 @@ export interface ServicoBuscado {
   unidadeComparada?: string;
   conversionKind?: 'DIRECT' | 'MATHEMATICAL' | 'TECHNICAL';
   conversionFactor?: number;
+  conversionUnavailableReason?:
+    | 'SOURCE_UNIT_UNKNOWN'
+    | 'TARGET_UNIT_UNKNOWN'
+    | 'TECHNICAL_RULE_MISSING';
   itemCode?: string;
   pageNumber?: number;
   matchConfidence?: 'HIGH' | 'MEDIUM';
@@ -34,7 +38,11 @@ export interface QualificationSource {
   valor?: number;
   contratoNumero?: string;
   servicos?: ServicoBuscado[];
-  selectionRole?: 'MEETS_ALONE' | 'USED_IN_SUM' | 'USED_WITH_APPROXIMATION' | 'AVAILABLE_UNUSED';
+  selectionRole?:
+    | 'MEETS_ALONE'
+    | 'USED_IN_SUM'
+    | 'USED_WITH_APPROXIMATION'
+    | 'AVAILABLE_UNUSED';
   hasCaveat?: boolean;
 }
 
@@ -121,7 +129,10 @@ export interface CumulativeResult {
 
 export interface IQualificationApi {
   resolveDescricoes(query: string): Promise<ResolvedDescricao[]>;
-  findAtestadosComServico(descricoes: string[], filters?: QualificationFilters): Promise<QualificationSource[]>;
+  findAtestadosComServico(
+    descricoes: string[],
+    filters?: QualificationFilters,
+  ): Promise<QualificationSource[]>;
   findAtestadosComQuantidadeMinima(
     descricoes: string[],
     minQty: number,
@@ -142,7 +153,9 @@ export interface IQualificationApi {
     services: ServiceRequirement[],
     filters?: QualificationFilters,
   ): Promise<ServiceCoverage[]>;
-  evaluateBundlePolicy(request: BundleEvaluationRequest): Promise<BundleEvaluationResult>;
+  evaluateBundlePolicy(
+    request: BundleEvaluationRequest,
+  ): Promise<BundleEvaluationResult>;
 }
 
 export const QUALIFICATION_API = Symbol('IQualificationApi');

@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { QueryFailedError } from 'typeorm';
@@ -8,8 +13,16 @@ import {
   TechnicalUnitConversionStatus,
 } from '../../persistence/entity/technical-unit-conversion.entity';
 import { UnitFamily } from '../../persistence/entity/unit-family.entity';
-import { RuleOrigin, UnitConversion, UnitConversionType } from '../../persistence/entity/unit-conversion.entity';
-import { Unit, UnitOrigin, UnitStatus } from '../../persistence/entity/unit.entity';
+import {
+  RuleOrigin,
+  UnitConversion,
+  UnitConversionType,
+} from '../../persistence/entity/unit-conversion.entity';
+import {
+  Unit,
+  UnitOrigin,
+  UnitStatus,
+} from '../../persistence/entity/unit.entity';
 import { ServiceUnitObservationRepository } from '../../persistence/repository/service-unit-observation.repository';
 import { TechnicalUnitConversionRepository } from '../../persistence/repository/technical-unit-conversion.repository';
 import { UnitConversionRepository } from '../../persistence/repository/unit-conversion.repository';
@@ -51,7 +64,8 @@ export class MeasurementsService implements IMeasurementsApi {
     const apiKey = config.get<string>('openaiApiKey');
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
-      this.extractionModel = config.get<string>('extractionModel') ?? 'gpt-4o-mini';
+      this.extractionModel =
+        config.get<string>('extractionModel') ?? 'gpt-4o-mini';
     }
   }
 
@@ -59,7 +73,10 @@ export class MeasurementsService implements IMeasurementsApi {
     return this.normalization.normalizeServiceKey(value);
   }
 
-  async resolveUnit(rawSymbol?: string, serviceDescription?: string): Promise<UnitResolutionResult> {
+  async resolveUnit(
+    rawSymbol?: string,
+    serviceDescription?: string,
+  ): Promise<UnitResolutionResult> {
     const normalizedSymbol = this.normalization.normalize(rawSymbol);
     if (!normalizedSymbol) {
       return {
@@ -71,7 +88,8 @@ export class MeasurementsService implements IMeasurementsApi {
 
     const existing = await this.units.findByNormalizedOrAlias(normalizedSymbol);
     if (existing) {
-      const family = existing.family ?? (await this.families.findById(existing.familyId));
+      const family =
+        existing.family ?? (await this.families.findById(existing.familyId));
       return {
         unitId: existing.id,
         canonicalSymbol: existing.canonicalSymbol,
@@ -83,7 +101,10 @@ export class MeasurementsService implements IMeasurementsApi {
       };
     }
 
-    const classification = await this.classifyUnitWithAi(rawSymbol ?? normalizedSymbol, serviceDescription);
+    const classification = await this.classifyUnitWithAi(
+      rawSymbol ?? normalizedSymbol,
+      serviceDescription,
+    );
     const family = classification?.familySlug
       ? await this.families.findBySlug(classification.familySlug)
       : null;
@@ -99,7 +120,13 @@ export class MeasurementsService implements IMeasurementsApi {
     const unit = await this.createOrUpdateUnit({
       name: this.normalization.canonicalize(normalizedSymbol),
       canonicalSymbol: this.normalization.canonicalize(normalizedSymbol),
-      aliases: [...new Set([normalizedSymbol, ...(classification?.aliases ?? [])].filter(Boolean))],
+      aliases: [
+        ...new Set(
+          [normalizedSymbol, ...(classification?.aliases ?? [])].filter(
+            Boolean,
+          ),
+        ),
+      ],
       familyId: family.id,
       origin: UnitOrigin.AI,
       status: UnitStatus.ACTIVE,
@@ -126,13 +153,16 @@ export class MeasurementsService implements IMeasurementsApi {
     serviceDescription?: string;
   }): Promise<ConvertedQuantityResult> {
     if (!params.sourceUnitId || !params.targetUnitSymbol) {
-      return { success: false };
+      return { success: false, unavailableReason: 'SOURCE_UNIT_UNKNOWN' };
     }
 
-    const targetNormalized = this.normalization.normalize(params.targetUnitSymbol);
-    const targetUnit = await this.units.findByNormalizedOrAlias(targetNormalized);
+    const targetNormalized = this.normalization.normalize(
+      params.targetUnitSymbol,
+    );
+    const targetUnit =
+      await this.units.findByNormalizedOrAlias(targetNormalized);
     if (!targetUnit) {
-      return { success: false };
+      return { success: false, unavailableReason: 'TARGET_UNIT_UNKNOWN' };
     }
 
     if (params.sourceUnitId === targetUnit.id) {
@@ -146,7 +176,10 @@ export class MeasurementsService implements IMeasurementsApi {
       };
     }
 
-    const math = await this.conversions.findByPair(params.sourceUnitId, targetUnit.id);
+    const math = await this.conversions.findByPair(
+      params.sourceUnitId,
+      targetUnit.id,
+    );
     if (math?.isActive) {
       return {
         success: true,
@@ -158,10 +191,13 @@ export class MeasurementsService implements IMeasurementsApi {
       };
     }
 
-    const normalizedServiceKey = params.normalizedServiceKey
-      ?? (params.serviceDescription ? this.normalizeServiceKey(params.serviceDescription) : undefined);
+    const normalizedServiceKey =
+      params.normalizedServiceKey ??
+      (params.serviceDescription
+        ? this.normalizeServiceKey(params.serviceDescription)
+        : undefined);
     if (!normalizedServiceKey) {
-      return { success: false };
+      return { success: false, unavailableReason: 'TECHNICAL_RULE_MISSING' };
     }
 
     const technical = await this.technicalConversions.findApprovedByKeyAndPair(
@@ -180,40 +216,61 @@ export class MeasurementsService implements IMeasurementsApi {
       };
     }
 
-    return { success: false };
+    return { success: false, unavailableReason: 'TECHNICAL_RULE_MISSING' };
   }
 
   listFamilies(): Promise<UnitFamily[]> {
     return this.families.findAll();
   }
 
-  listUnits(filters?: { search?: string; familyId?: string; status?: UnitStatus; origin?: UnitOrigin }): Promise<Unit[]> {
-    return this.units.list(filters ?? {}).then((items) => items.filter(
-      (item) => this.normalization.isValidStoredSymbol(item.normalizedSymbol),
-    ));
+  listUnits(filters?: {
+    search?: string;
+    familyId?: string;
+    status?: UnitStatus;
+    origin?: UnitOrigin;
+  }): Promise<Unit[]> {
+    return this.units
+      .list(filters ?? {})
+      .then((items) =>
+        items.filter((item) =>
+          this.normalization.isValidStoredSymbol(item.normalizedSymbol),
+        ),
+      );
   }
 
   listConversions(): Promise<UnitConversion[]> {
     return this.conversions.findAll();
   }
 
-  async listTechnicalConversions(status?: TechnicalUnitConversionStatus): Promise<TechnicalUnitConversionView[]> {
+  async listTechnicalConversions(
+    status?: TechnicalUnitConversionStatus,
+  ): Promise<TechnicalUnitConversionView[]> {
     const items = await this.technicalConversions.list(status);
     return items.map((item) => this.toTechnicalConversionView(item));
   }
 
-  async createOrUpdateUnit(payload: MeasurementUnitPayload, id?: string): Promise<Unit> {
-    const normalizedSymbol = this.normalization.normalize(payload.canonicalSymbol);
+  async createOrUpdateUnit(
+    payload: MeasurementUnitPayload,
+    id?: string,
+  ): Promise<Unit> {
+    const normalizedSymbol = this.normalization.normalize(
+      payload.canonicalSymbol,
+    );
     if (!normalizedSymbol) {
       throw new BadRequestException('Simbolo de unidade invalido');
     }
 
     const canonicalSymbol = this.normalization.canonicalize(normalizedSymbol);
-    const aliases = [...new Set(
-      (payload.aliases ?? [])
-        .map((alias) => this.normalization.normalize(alias))
-        .filter((alias): alias is string => Boolean(alias) && alias !== normalizedSymbol),
-    )];
+    const aliases = [
+      ...new Set(
+        (payload.aliases ?? [])
+          .map((alias) => this.normalization.normalize(alias))
+          .filter(
+            (alias): alias is string =>
+              Boolean(alias) && alias !== normalizedSymbol,
+          ),
+      ),
+    ];
     const base: Partial<Unit> = {
       name: payload.name,
       canonicalSymbol,
@@ -228,8 +285,9 @@ export class MeasurementsService implements IMeasurementsApi {
       return (await this.units.updateEntity(id, base)) as Unit;
     }
 
-    const existing = (await this.units.findByCanonicalSymbol(canonicalSymbol))
-      ?? (await this.units.findByNormalizedOrAlias(normalizedSymbol));
+    const existing =
+      (await this.units.findByCanonicalSymbol(canonicalSymbol)) ??
+      (await this.units.findByNormalizedOrAlias(normalizedSymbol));
     if (existing) {
       return existing;
     }
@@ -238,8 +296,9 @@ export class MeasurementsService implements IMeasurementsApi {
       return await this.units.saveEntity(this.units.createEntity(base));
     } catch (error) {
       if (this.isUniqueViolation(error)) {
-        const conflicted = (await this.units.findByCanonicalSymbol(canonicalSymbol))
-          ?? (await this.units.findByNormalizedOrAlias(normalizedSymbol));
+        const conflicted =
+          (await this.units.findByCanonicalSymbol(canonicalSymbol)) ??
+          (await this.units.findByNormalizedOrAlias(normalizedSymbol));
         if (conflicted) return conflicted;
       }
       throw error;
@@ -258,9 +317,12 @@ export class MeasurementsService implements IMeasurementsApi {
   ): Promise<UnitConversion> {
     const sourceUnit = await this.units.findById(payload.sourceUnitId);
     const targetUnit = await this.units.findById(payload.targetUnitId);
-    if (!sourceUnit || !targetUnit) throw new Error('Unidade origem/destino não encontrada');
+    if (!sourceUnit || !targetUnit)
+      throw new Error('Unidade origem/destino não encontrada');
     if (sourceUnit.familyId !== targetUnit.familyId) {
-      throw new Error('Conversões matemáticas só podem existir entre unidades da mesma família');
+      throw new Error(
+        'Conversões matemáticas só podem existir entre unidades da mesma família',
+      );
     }
 
     const base: Partial<UnitConversion> = {
@@ -283,7 +345,9 @@ export class MeasurementsService implements IMeasurementsApi {
     payload: TechnicalConversionPayload,
     id?: string,
   ): Promise<TechnicalUnitConversionView> {
-    const normalizedServiceKey = payload.normalizedServiceKey ?? this.normalizeServiceKey(payload.serviceDescription);
+    const normalizedServiceKey =
+      payload.normalizedServiceKey ??
+      this.normalizeServiceKey(payload.serviceDescription);
     const base: Partial<TechnicalUnitConversion> = {
       serviceDescription: payload.serviceDescription,
       normalizedServiceKey,
@@ -303,17 +367,27 @@ export class MeasurementsService implements IMeasurementsApi {
 
     if (id) {
       if (existing && existing.id !== id) {
-        throw new ConflictException('Já existe uma conversão técnica para este serviço e par de unidades');
+        throw new ConflictException(
+          'Já existe uma conversão técnica para este serviço e par de unidades',
+        );
       }
 
       const updated = await this.technicalConversions.updateEntity(id, base);
-      if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', id);
+      if (!updated)
+        throw new NotFoundDomainException('TechnicalUnitConversion', id);
       return this.toTechnicalConversionView(updated);
     }
 
     if (existing) {
-      const updated = await this.technicalConversions.updateEntity(existing.id, base);
-      if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', existing.id);
+      const updated = await this.technicalConversions.updateEntity(
+        existing.id,
+        base,
+      );
+      if (!updated)
+        throw new NotFoundDomainException(
+          'TechnicalUnitConversion',
+          existing.id,
+        );
       return this.toTechnicalConversionView(updated);
     }
 
@@ -332,8 +406,15 @@ export class MeasurementsService implements IMeasurementsApi {
       );
       if (!concurrent) throw error;
 
-      const updated = await this.technicalConversions.updateEntity(concurrent.id, base);
-      if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', concurrent.id);
+      const updated = await this.technicalConversions.updateEntity(
+        concurrent.id,
+        base,
+      );
+      if (!updated)
+        throw new NotFoundDomainException(
+          'TechnicalUnitConversion',
+          concurrent.id,
+        );
       return this.toTechnicalConversionView(updated);
     }
   }
@@ -342,8 +423,11 @@ export class MeasurementsService implements IMeasurementsApi {
     id: string,
     status: TechnicalUnitConversionStatus,
   ): Promise<TechnicalUnitConversionView> {
-    const updated = await this.technicalConversions.updateEntity(id, { status });
-    if (!updated) throw new NotFoundDomainException('TechnicalUnitConversion', id);
+    const updated = await this.technicalConversions.updateEntity(id, {
+      status,
+    });
+    if (!updated)
+      throw new NotFoundDomainException('TechnicalUnitConversion', id);
     return this.toTechnicalConversionView(updated);
   }
 
@@ -357,23 +441,30 @@ export class MeasurementsService implements IMeasurementsApi {
   }): Promise<void> {
     if (!params.unitId) return;
 
-    await this.observations.saveEntity(this.observations.createEntity({
-      atestadoId: params.atestadoId,
-      servicoExecutadoId: params.servicoExecutadoId,
-      serviceDescription: params.serviceDescription,
-      normalizedServiceKey: this.normalizeServiceKey(params.serviceDescription),
-      unitId: params.unitId,
-      quantidade: params.quantity,
-      rawUnitSymbol: params.rawUnitSymbol,
-      evidenceJson: JSON.stringify({ source: 'IMPORT' }),
-    }));
+    await this.observations.saveEntity(
+      this.observations.createEntity({
+        atestadoId: params.atestadoId,
+        servicoExecutadoId: params.servicoExecutadoId,
+        serviceDescription: params.serviceDescription,
+        normalizedServiceKey: this.normalizeServiceKey(
+          params.serviceDescription,
+        ),
+        unitId: params.unitId,
+        quantidade: params.quantity,
+        rawUnitSymbol: params.rawUnitSymbol,
+        evidenceJson: JSON.stringify({ source: 'IMPORT' }),
+      }),
+    );
 
     await this.suggestTechnicalConversionsForService(params.serviceDescription);
   }
 
-  private async suggestTechnicalConversionsForService(serviceDescription: string): Promise<void> {
+  private async suggestTechnicalConversionsForService(
+    serviceDescription: string,
+  ): Promise<void> {
     const normalizedServiceKey = this.normalizeServiceKey(serviceDescription);
-    const grouped = await this.observations.findGroupedCandidates(normalizedServiceKey);
+    const grouped =
+      await this.observations.findGroupedCandidates(normalizedServiceKey);
     if (grouped.length !== 2) return;
 
     for (const source of grouped) {
@@ -387,7 +478,13 @@ export class MeasurementsService implements IMeasurementsApi {
         const targetAvg = parseFloat(target.avgQuantity ?? '');
         if (!sourceAvg || !targetAvg) continue;
         const factor = sourceAvg / targetAvg;
-        if (!Number.isFinite(factor) || factor <= 0 || factor < 0.01 || factor > 1000) continue;
+        if (
+          !Number.isFinite(factor) ||
+          factor <= 0 ||
+          factor < 0.01 ||
+          factor > 1000
+        )
+          continue;
 
         const existing = await this.technicalConversions.findExisting(
           normalizedServiceKey,
@@ -430,7 +527,10 @@ export class MeasurementsService implements IMeasurementsApi {
     }
   }
 
-  private async classifyUnitWithAi(symbol: string, serviceDescription?: string): Promise<AiUnitClassification | null> {
+  private async classifyUnitWithAi(
+    symbol: string,
+    serviceDescription?: string,
+  ): Promise<AiUnitClassification | null> {
     if (!this.openai || !this.extractionModel) return null;
     try {
       const families = await this.families.findAll();
@@ -451,32 +551,55 @@ Contexto de serviço: ${serviceDescription ?? '-'}
         temperature: 0,
         max_tokens: 300,
       });
-      return JSON.parse(response.choices[0]?.message?.content ?? '{}') as AiUnitClassification;
+      return JSON.parse(
+        response.choices[0]?.message?.content ?? '{}',
+      ) as AiUnitClassification;
     } catch (error) {
-      this.logger.warn(`Falha ao classificar unidade com IA: ${(error as Error).message}`);
+      this.logger.warn(
+        `Falha ao classificar unidade com IA: ${(error as Error).message}`,
+      );
       return null;
     }
   }
 
-  private async ensureKnownMathematicalConversions(unit: Unit, family: UnitFamily): Promise<void> {
+  private async ensureKnownMathematicalConversions(
+    unit: Unit,
+    family: UnitFamily,
+  ): Promise<void> {
     const canonical = unit.canonicalSymbol;
     const knownFactors = this.getSeedFactorsForFamily(family.slug);
     const current = knownFactors[canonical];
     if (current == null) return;
 
-    const familyUnits = (await this.units.list({ familyId: family.id, status: UnitStatus.ACTIVE }))
-      .filter((item) => item.id !== unit.id);
+    const familyUnits = (
+      await this.units.list({ familyId: family.id, status: UnitStatus.ACTIVE })
+    ).filter((item) => item.id !== unit.id);
 
     for (const otherUnit of familyUnits) {
       const otherFactor = knownFactors[otherUnit.canonicalSymbol];
       if (otherFactor == null) continue;
-      await this.ensureConversionPair(unit.id, otherUnit.id, otherFactor / current);
-      await this.ensureConversionPair(otherUnit.id, unit.id, current / otherFactor);
+      await this.ensureConversionPair(
+        unit.id,
+        otherUnit.id,
+        otherFactor / current,
+      );
+      await this.ensureConversionPair(
+        otherUnit.id,
+        unit.id,
+        current / otherFactor,
+      );
     }
   }
 
-  private async ensureConversionPair(sourceUnitId: string, targetUnitId: string, factor: number): Promise<void> {
-    const existing = await this.conversions.findByPair(sourceUnitId, targetUnitId);
+  private async ensureConversionPair(
+    sourceUnitId: string,
+    targetUnitId: string,
+    factor: number,
+  ): Promise<void> {
+    const existing = await this.conversions.findByPair(
+      sourceUnitId,
+      targetUnitId,
+    );
     if (existing) return;
     await this.createOrUpdateMathematicalConversion({
       sourceUnitId,
@@ -507,11 +630,16 @@ Contexto de serviço: ${serviceDescription ?? '-'}
   }
 
   private isUniqueViolation(error: unknown): boolean {
-    return error instanceof QueryFailedError
-      && (error as QueryFailedError & { driverError?: { code?: string } }).driverError?.code === '23505';
+    return (
+      error instanceof QueryFailedError &&
+      (error as QueryFailedError & { driverError?: { code?: string } })
+        .driverError?.code === '23505'
+    );
   }
 
-  private toTechnicalConversionView(item: TechnicalUnitConversion): TechnicalUnitConversionView {
+  private toTechnicalConversionView(
+    item: TechnicalUnitConversion,
+  ): TechnicalUnitConversionView {
     return {
       id: item.id,
       serviceDescription: item.serviceDescription,

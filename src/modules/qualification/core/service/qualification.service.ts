@@ -1245,6 +1245,7 @@ export class QualificationService {
       let conversionKind: ServicoBuscado['conversionKind'];
       let conversionFactor: number | undefined;
       let unidadeComparada: string | undefined;
+      let conversionUnavailableReason: ServicoBuscado['conversionUnavailableReason'];
 
       if (targetUnitSymbol && quantity != null) {
         const converted = await this.measurements.convertQuantity({
@@ -1254,17 +1255,23 @@ export class QualificationService {
           normalizedServiceKey: row.normalizedServiceKey ?? undefined,
           serviceDescription: row.descricao,
         });
-        if (!converted.success) continue;
-        convertedQuantity = converted.convertedQuantity;
-        conversionKind = converted.conversionKind;
-        conversionFactor = converted.conversionFactor;
-        unidadeComparada = converted.targetUnitSymbol;
+        if (!converted.success) {
+          convertedQuantity = undefined;
+          unidadeComparada = converted.targetUnitSymbol ?? targetUnitSymbol;
+          conversionUnavailableReason = converted.unavailableReason;
+        } else {
+          convertedQuantity = converted.convertedQuantity;
+          conversionKind = converted.conversionKind;
+          conversionFactor = converted.conversionFactor;
+        }
       }
 
       if (!grouped.has(row.atestadoId)) {
         grouped.set(row.atestadoId, {
           source: {
-            lastReprocessedAt: row.last_reprocessed_at ? new Date(row.last_reprocessed_at) : undefined,
+            lastReprocessedAt: row.last_reprocessed_at
+              ? new Date(row.last_reprocessed_at)
+              : undefined,
             atestadoId: row.atestadoId,
             filename: row.filename,
             obraNome: row.obraNome ?? '',
@@ -1295,6 +1302,7 @@ export class QualificationService {
         conversionKind,
         conversionFactor,
         itemCode: row.itemCode ?? undefined,
+        conversionUnavailableReason,
         pageNumber: row.pageNumber ?? undefined,
         matchConfidence:
           row.baixaConfianca || row.matchType === 'TEXTUAL_FORTE'

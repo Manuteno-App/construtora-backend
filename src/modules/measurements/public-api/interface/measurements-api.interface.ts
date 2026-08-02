@@ -1,7 +1,17 @@
 import { TechnicalUnitConversionStatus } from '../../persistence/entity/technical-unit-conversion.entity';
-import { UnitFamily, UnitFamilyStatus } from '../../persistence/entity/unit-family.entity';
-import { RuleOrigin, UnitConversion } from '../../persistence/entity/unit-conversion.entity';
-import { Unit, UnitOrigin, UnitStatus } from '../../persistence/entity/unit.entity';
+import {
+  UnitFamily,
+  UnitFamilyStatus,
+} from '../../persistence/entity/unit-family.entity';
+import {
+  RuleOrigin,
+  UnitConversion,
+} from '../../persistence/entity/unit-conversion.entity';
+import {
+  Unit,
+  UnitOrigin,
+  UnitStatus,
+} from '../../persistence/entity/unit.entity';
 
 export interface UnitResolutionResult {
   unitId?: string;
@@ -19,6 +29,10 @@ export interface ConvertedQuantityResult {
   targetUnitId?: string;
   targetUnitSymbol?: string;
   conversionKind?: 'DIRECT' | 'MATHEMATICAL' | 'TECHNICAL';
+  unavailableReason?:
+    | 'SOURCE_UNIT_UNKNOWN'
+    | 'TARGET_UNIT_UNKNOWN'
+    | 'TECHNICAL_RULE_MISSING';
   conversionFactor?: number;
 }
 
@@ -67,7 +81,10 @@ export interface TechnicalUnitConversionView {
 }
 
 export interface IMeasurementsApi {
-  resolveUnit(rawSymbol?: string, serviceDescription?: string): Promise<UnitResolutionResult>;
+  resolveUnit(
+    rawSymbol?: string,
+    serviceDescription?: string,
+  ): Promise<UnitResolutionResult>;
   convertQuantity(params: {
     quantity: number;
     sourceUnitId?: string;
@@ -77,14 +94,33 @@ export interface IMeasurementsApi {
   }): Promise<ConvertedQuantityResult>;
   normalizeServiceKey(value: string): string;
   listFamilies(): Promise<UnitFamily[]>;
-  listUnits(filters?: { search?: string; familyId?: string; status?: UnitStatus; origin?: UnitOrigin }): Promise<Unit[]>;
+  listUnits(filters?: {
+    search?: string;
+    familyId?: string;
+    status?: UnitStatus;
+    origin?: UnitOrigin;
+  }): Promise<Unit[]>;
   listConversions(): Promise<UnitConversion[]>;
-  listTechnicalConversions(status?: TechnicalUnitConversionStatus): Promise<TechnicalUnitConversionView[]>;
-  createOrUpdateUnit(payload: MeasurementUnitPayload, id?: string): Promise<Unit>;
+  listTechnicalConversions(
+    status?: TechnicalUnitConversionStatus,
+  ): Promise<TechnicalUnitConversionView[]>;
+  createOrUpdateUnit(
+    payload: MeasurementUnitPayload,
+    id?: string,
+  ): Promise<Unit>;
   deleteUnit(id: string): Promise<void>;
-  createOrUpdateMathematicalConversion(payload: MeasurementUnitConversionPayload, id?: string): Promise<UnitConversion>;
-  createOrUpdateTechnicalConversion(payload: TechnicalConversionPayload, id?: string): Promise<TechnicalUnitConversionView>;
-  updateTechnicalConversionStatus(id: string, status: TechnicalUnitConversionStatus): Promise<TechnicalUnitConversionView>;
+  createOrUpdateMathematicalConversion(
+    payload: MeasurementUnitConversionPayload,
+    id?: string,
+  ): Promise<UnitConversion>;
+  createOrUpdateTechnicalConversion(
+    payload: TechnicalConversionPayload,
+    id?: string,
+  ): Promise<TechnicalUnitConversionView>;
+  updateTechnicalConversionStatus(
+    id: string,
+    status: TechnicalUnitConversionStatus,
+  ): Promise<TechnicalUnitConversionView>;
 }
 
 export const MEASUREMENTS_API = Symbol('IMEASUREMENTS_API');
