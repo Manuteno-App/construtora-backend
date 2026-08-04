@@ -61,6 +61,24 @@ export class Obra {
   @Column({ nullable: true })
   art?: string;
 
+  @Column({ name: 'numero_atestado', nullable: true, type: 'text' })
+  numeroAtestado?: string;
+
+  @Column({ name: 'extensao_declarada_km', nullable: true, type: 'numeric', precision: 14, scale: 4 })
+  extensaoDeclaradaKm?: number;
+
+  @Column({ name: 'km_inicial', nullable: true, type: 'numeric', precision: 14, scale: 4 })
+  kmInicial?: number;
+
+  @Column({ name: 'km_final', nullable: true, type: 'numeric', precision: 14, scale: 4 })
+  kmFinal?: number;
+
+  @Column({ name: 'extensao_calculada_km', nullable: true, type: 'numeric', precision: 14, scale: 4 })
+  extensaoCalculadaKm?: number;
+
+  @Column({ name: 'extensao_km', nullable: true, type: 'numeric', precision: 14, scale: 4 })
+  extensaoKm?: number;
+
   @OneToMany(() => Contrato, (c) => c.obra)
   contratos!: Contrato[];
 

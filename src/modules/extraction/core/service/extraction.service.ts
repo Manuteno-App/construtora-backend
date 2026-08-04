@@ -63,6 +63,10 @@ export class ExtractionService {
         dataFim: entities.obra?.dataFim || kv['data_fim'] || kv['data_conclusao'] || kv['data_termino'],
         cliente: entities.obra?.cliente || kv['contratante'],
         engenheiro: entities.obra?.engenheiro || kv['engenheiro'],
+        numeroAtestado: entities.obra?.numeroAtestado || kv['numero_atestado'],
+        extensaoDeclaradaKm: entities.obra?.extensaoDeclaradaKm,
+        kmInicial: entities.obra?.kmInicial,
+        kmFinal: entities.obra?.kmFinal,
       };
     }
     const visionCompanies: Array<{ nome: string; cnpj?: string; tipo: string }> = [];
@@ -110,6 +114,9 @@ INSTRUÇÕES:
 - "obra.cliente": nome da empresa/órgão CONTRATANTE (quem emitiu o atestado)
 - "obra.engenheiro": nome do engenheiro responsável técnico mencionado no documento
 - "obra.art": número da ART/RRT
+- "obra.numeroAtestado": número do atestado, CAT, certidão ou documento equivalente; não use o número do contrato
+- "obra.extensaoDeclaradaKm": extensão total declarada da obra em quilômetros; converta metros para km (ex.: 1.500 m = 1.5)
+- "obra.kmInicial" e "obra.kmFinal": marcos de um trecho "KM X ao KM Y", como números em km; não calcule a extensão
 - "empresas": lista de empresas mencionadas com tipo CONTRATANTE ou CONTRATADA
 - "contrato.numero": número do contrato (ex: "0.00.08.0053-00")
 
@@ -131,7 +138,11 @@ JSON esperado:
     "valorAtestado": number ou null,
     "cliente": "nome do contratante ou null",
     "engenheiro": "nome do engenheiro ou null",
-    "art": "string ou null"
+    "art": "string ou null",
+    "numeroAtestado": "string ou null",
+    "extensaoDeclaradaKm": "number ou null",
+    "kmInicial": "number ou null",
+    "kmFinal": "number ou null"
   },
   "empresas": [
     { "nome": "string", "cnpj": "string ou null", "tipo": "CONTRATANTE ou CONTRATADA" }

@@ -6,6 +6,7 @@ export class QualificationFiltersDto {
   @IsOptional() @IsString() dataFim?: string;
   @IsOptional() @IsString() localidade?: string;
   @IsOptional() @IsNumber() @Min(0) minValor?: number;
+  @IsOptional() @IsNumber() @Min(0) minExtensaoKm?: number;
 }
 
 export class ServiceRequirementDto {

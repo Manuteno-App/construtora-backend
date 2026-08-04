@@ -19,6 +19,12 @@ export interface CreateObraData {
   cliente?: string;
   engenheiro?: string;
   art?: string;
+  numeroAtestado?: string;
+  extensaoDeclaradaKm?: number;
+  kmInicial?: number;
+  kmFinal?: number;
+  extensaoCalculadaKm?: number;
+  extensaoKm?: number;
 }
 
 export interface EmpresaRankingRow {

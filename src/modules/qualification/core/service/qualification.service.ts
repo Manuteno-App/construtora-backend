@@ -53,6 +53,12 @@ interface MatchingServiceRow {
   dataFim: string | null;
   valor: string | number | null;
   contratoNumero: string | null;
+  numeroAtestado: string | null;
+  extensaoKm: string | number | null;
+  extensaoDeclaradaKm: string | number | null;
+  kmInicial: string | number | null;
+  kmFinal: string | number | null;
+  extensaoCalculadaKm: string | number | null;
   descricao: string;
   quantidade: string | null;
   unidade: string | null;
@@ -599,6 +605,10 @@ export class QualificationService {
     if (filters.minValor !== undefined) {
       params.push(filters.minValor);
       clauses.push(`o.valor >= $${params.length}`);
+    }
+    if (filters.minExtensaoKm !== undefined) {
+      params.push(filters.minExtensaoKm);
+      clauses.push('o.extensao_km >= $' + params.length);
     }
     return clauses;
   }
@@ -1187,6 +1197,12 @@ export class QualificationService {
          MIN(o.data_inicio::text) AS "dataInicio",
          MAX(o.data_fim::text) AS "dataFim",
          MAX(o.valor) AS valor,
+         MAX(o.numero_atestado) AS "numeroAtestado",
+         MAX(o.extensao_km) AS "extensaoKm",
+         MAX(o.extensao_declarada_km) AS "extensaoDeclaradaKm",
+         MAX(o.km_inicial) AS "kmInicial",
+         MAX(o.km_final) AS "kmFinal",
+         MAX(o.extensao_calculada_km) AS "extensaoCalculadaKm",
          (SELECT c.numero FROM contratos c
           INNER JOIN obras o2 ON o2.id = c.obra_id
           WHERE o2.atestado_id = a.id LIMIT 1) AS "contratoNumero",
@@ -1281,6 +1297,18 @@ export class QualificationService {
             valor:
               row.valor != null ? parseFloat(String(row.valor)) : undefined,
             contratoNumero: row.contratoNumero ?? undefined,
+            numeroAtestado: row.numeroAtestado ?? undefined,
+            numeroPrincipal: row.numeroAtestado ?? row.contratoNumero ?? undefined,
+            numeroPrincipalOrigem: row.numeroAtestado
+              ? 'ATESTADO'
+              : row.contratoNumero
+                ? 'CONTRATO'
+                : undefined,
+            extensaoKm: row.extensaoKm == null ? undefined : Number(row.extensaoKm),
+            extensaoDeclaradaKm: row.extensaoDeclaradaKm == null ? undefined : Number(row.extensaoDeclaradaKm),
+            kmInicial: row.kmInicial == null ? undefined : Number(row.kmInicial),
+            kmFinal: row.kmFinal == null ? undefined : Number(row.kmFinal),
+            extensaoCalculadaKm: row.extensaoCalculadaKm == null ? undefined : Number(row.extensaoCalculadaKm),
           },
           totalQuantidade: 0,
           servicos: [],

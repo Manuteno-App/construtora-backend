@@ -23,6 +23,10 @@ export interface ExtractedEntities {
     cliente?: string;
     engenheiro?: string;
     art?: string;
+    numeroAtestado?: string;
+    extensaoDeclaradaKm?: number;
+    kmInicial?: number;
+    kmFinal?: number;
   };
   empresas?: Array<{ nome: string; cnpj?: string; tipo?: string }>;
   contrato?: { numero?: string; data?: string; valor?: number };
@@ -75,6 +79,12 @@ export class EntityOrchestrationService {
     return isNaN(d.getTime()) ? undefined : d;
   }
 
+  private normalizeKm(value?: number): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? value
+      : undefined;
+  }
+
   async persistExtractedEntities(
     entities: ExtractedEntities,
     atestadoId: string,
@@ -83,6 +93,13 @@ export class EntityOrchestrationService {
     let savedObraId: string | undefined;
 
     if (entities.obra?.nome) {
+      const extensaoDeclaradaKm = this.normalizeKm(entities.obra.extensaoDeclaradaKm);
+      const kmInicial = this.normalizeKm(entities.obra.kmInicial);
+      const kmFinal = this.normalizeKm(entities.obra.kmFinal);
+      const extensaoCalculadaKm =
+        kmInicial !== undefined && kmFinal !== undefined
+          ? Math.abs(kmFinal - kmInicial)
+          : undefined;
       const obra = await this.obraRepo.upsertByAtestadoId({
         atestadoId,
         nome: entities.obra.nome,
@@ -98,6 +115,12 @@ export class EntityOrchestrationService {
         cliente: entities.obra.cliente,
         engenheiro: entities.obra.engenheiro,
         art: entities.obra.art,
+        numeroAtestado: entities.obra.numeroAtestado,
+        extensaoDeclaradaKm,
+        kmInicial,
+        kmFinal,
+        extensaoCalculadaKm,
+        extensaoKm: extensaoDeclaradaKm ?? extensaoCalculadaKm,
       });
       savedObraId = obra.id;
 

@@ -26,6 +26,7 @@ const HEADER_PATTERNS: Array<[string, RegExp]> = [
   ['contratante',   /(?:contratante|cliente|tomador)[:\s]+([^\n]{5,100})/i],
   ['contratada',    /(?:contratada|empreiteira|executora)[:\s]+([^\n]{5,100})/i],
   ['contrato',      /(?:contrato|n[uú]mero|n[º°.])\s*[:\s.°#]*\s*([A-Z0-9][A-Z0-9/.\-]{2,30})/i],
+  ['numero_atestado', /(?:atestado|certid[aã]o|cat)\s*(?:n[uú]mero|n[º°.])?\s*[:\s.°#]*\s*([A-Z0-9][A-Z0-9/.\-]{2,30})/i],
   ['valor_obra',    /(?:valor total|valor da obra|valor global)[:\s]+R?\$?\s*([\d.,]+)/i],
   ['valor_atestado',/(?:valor atestado|valor dos servi[cç]os)[:\s]+R?\$?\s*([\d.,]+)/i],
   ['engenheiro',    /(?:engenheiro|resp[.\s]*t[eé]cnico|responsável)[:\s]+([^\n]{5,80})/i],
