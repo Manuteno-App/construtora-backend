@@ -23,17 +23,20 @@ export class AtestadosController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'sortBy', enum: ['createdAt', 'lastReprocessedAt'], required: false })
+  @ApiQuery({ name: 'search', required: false, description: 'Busca por nome da obra, numero do contrato ou arquivo' })
   findAll(
     @Query('status') status?: AtestadoStatus,
     @Query('page') page = 1,
     @Query('limit') limit = 20,
     @Query('sortBy') sortBy?: 'createdAt' | 'lastReprocessedAt',
+    @Query('search') search?: string,
   ) {
     return this.documentService.listAtestados({
       status,
       page: Number(page),
       limit: Number(limit),
       sortBy,
+      search,
     });
   }
 

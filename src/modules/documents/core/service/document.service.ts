@@ -9,6 +9,7 @@ export interface ListAtestadosParams {
   page: number;
   limit: number;
   sortBy?: 'createdAt' | 'lastReprocessedAt';
+  search?: string;
 }
 
 @Injectable()
@@ -40,6 +41,7 @@ export class DocumentService {
       params.page,
       params.limit,
       params.sortBy,
+      params.search,
     );
     return { items, total };
   }

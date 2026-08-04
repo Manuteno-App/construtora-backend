@@ -32,6 +32,7 @@ export class AtestadoRepository extends DefaultTypeOrmRepository<Atestado> {
     page: number,
     limit: number,
     sortBy: 'createdAt' | 'lastReprocessedAt' = 'createdAt',
+    search?: string,
   ): Promise<[Atestado[], number]> {
     const qb = this.createQueryBuilder('a')
       .skip((page - 1) * limit)
@@ -45,6 +46,13 @@ export class AtestadoRepository extends DefaultTypeOrmRepository<Atestado> {
 
     if (status) {
       qb.where('a.status = :status', { status });
+    }
+
+    if (search?.trim()) {
+      qb.andWhere(
+        '(a.originalFilename ILIKE :search OR EXISTS (SELECT 1 FROM obras obra LEFT JOIN contratos contrato ON contrato.obra_id = obra.id WHERE obra.atestado_id = a.id AND (obra.nome ILIKE :search OR contrato.numero ILIKE :search)))',
+        { search: '%' + search.trim() + '%' },
+      );
     }
 
     return qb.getManyAndCount();
