@@ -1,7 +1,7 @@
 /** Parses Brazilian quantities without allowing JavaScript's partial parseFloat behaviour. */
 export function parseNumeroBR(value?: string | null, unitSymbol?: string | null): number | undefined {
   if (!value) return undefined;
-  const raw = value.trim().replace(/\s/g, '');
+  const raw = value.trim().replace(/\s/g, '').replace(/;+$/, '').replace(/^\((.+)\)$/, '$1');
   if (!raw) return undefined;
   // Vision sometimes returns the printed quantity with its unit in the same
   // field. Strip only known trailing units so unknown suffixes stay invalid.

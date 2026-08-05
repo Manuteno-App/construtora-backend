@@ -11,6 +11,8 @@ describe('parseNumeroBR', () => {
     ['210 ton', 210],
     ['54.186,830 t', 54186.83],
     ['91,488,00 m2', 91488],
+    ['842,77 m3;', 842.77],
+    ['(5 ud)', 5],
     ['5.000ml', 5000],
   ])('parses %s', (raw, expected) => expect(parseNumeroBR(raw)).toBe(expected));
 
