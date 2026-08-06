@@ -1,8 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { NotFoundDomainException } from '../../../../common/exception/not-found-domain.exception';
 import { StorageService } from '../../../infrastructure/storage/storage.service';
-import { Atestado, AtestadoStatus } from '../../persistence/entity/atestado.entity';
+import { Atestado, AtestadoCategoria, AtestadoStatus } from '../../persistence/entity/atestado.entity';
 import { AtestadoRepository } from '../../persistence/repository/atestado.repository';
+
+const categoryFromFilename = (filename: string): AtestadoCategoria | undefined => {
+  const code = filename.trim().match(/^(ST|CIV|SAN|INS)\s*-/i)?.[1]?.toUpperCase();
+  return code && code in AtestadoCategoria ? code as AtestadoCategoria : undefined;
+};
 
 export interface ListAtestadosParams {
   status?: AtestadoStatus;
@@ -20,7 +25,10 @@ export class DocumentService {
   ) {}
 
   async createAtestado(params: { s3Key: string; originalFilename: string }): Promise<Atestado> {
-    return this.atestadoRepo.createAndSave(params);
+    return this.atestadoRepo.createAndSave({
+      ...params,
+      categoria: categoryFromFilename(params.originalFilename),
+    });
   }
 
   async findById(id: string): Promise<Atestado> {

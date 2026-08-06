@@ -59,6 +59,8 @@ interface MatchingServiceRow {
   kmInicial: string | number | null;
   kmFinal: string | number | null;
   extensaoCalculadaKm: string | number | null;
+  categoriaAtestado: 'ST' | 'CIV' | 'SAN' | 'INS' | null;
+  serviceId: string;
   descricao: string;
   quantidade: string | null;
   unidade: string | null;
@@ -609,9 +611,13 @@ export class QualificationService {
       params.push(filters.minValor);
       clauses.push(`o.valor >= $${params.length}`);
     }
-    if (filters.minExtensaoKm !== undefined) {
-      params.push(filters.minExtensaoKm);
-      clauses.push('o.extensao_km >= $' + params.length);
+    if (filters.extensaoKm !== undefined) {
+      params.push(filters.extensaoKm);
+      clauses.push('o.extensao_km = $' + params.length);
+    }
+    if (filters.categoriaAtestado) {
+      params.push(filters.categoriaAtestado);
+      clauses.push('a.categoria = $' + params.length);
     }
     return clauses;
   }
@@ -1206,9 +1212,11 @@ export class QualificationService {
          MAX(o.km_inicial) AS "kmInicial",
          MAX(o.km_final) AS "kmFinal",
          MAX(o.extensao_calculada_km) AS "extensaoCalculadaKm",
+         a.categoria AS "categoriaAtestado",
          (SELECT c.numero FROM contratos c
           INNER JOIN obras o2 ON o2.id = c.obra_id
           WHERE o2.atestado_id = a.id LIMIT 1) AS "contratoNumero",
+         s.id AS "serviceId",
          s.descricao,
          s.quantidade,
          s.unidade,
@@ -1261,12 +1269,7 @@ export class QualificationService {
     for (const row of rows) {
       const quantity =
         row.quantidade != null ? parseFloat(row.quantidade) : undefined;
-      const serviceKey = [
-        row.atestadoId,
-        row.normalizedServiceKey ?? this.normalizeSearchText(row.descricao),
-        row.unitId ?? row.unidade ?? '',
-        quantity ?? '',
-      ].join('|');
+      const serviceKey = row.serviceId;
       if (quantity !== undefined && countedServices.has(serviceKey)) continue;
       if (quantity !== undefined) countedServices.add(serviceKey);
       let convertedQuantity = quantity;
@@ -1330,6 +1333,7 @@ export class QualificationService {
               row.extensaoCalculadaKm == null
                 ? undefined
                 : Number(row.extensaoCalculadaKm),
+            categoriaAtestado: row.categoriaAtestado ?? undefined,
           },
           totalQuantidade: 0,
           servicos: [],

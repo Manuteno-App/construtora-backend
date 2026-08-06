@@ -9,6 +9,13 @@ import { Obra } from '../../../extraction/persistence/entity/obra.entity';
 import { ServicoExecutado } from '../../../extraction/persistence/entity/servico-executado.entity';
 import { Chunk } from '../../../ingestion/persistence/entity/chunk.entity';
 
+export enum AtestadoCategoria {
+  ST = 'ST',
+  CIV = 'CIV',
+  SAN = 'SAN',
+  INS = 'INS',
+}
+
 export enum AtestadoStatus {
   PENDING = 'PENDING',
   PROCESSING = 'PROCESSING',
@@ -26,6 +33,9 @@ export class Atestado {
 
   @Column({ name: 'original_filename' })
   originalFilename!: string;
+
+  @Column({ name: 'categoria', type: 'text', nullable: true })
+  categoria?: AtestadoCategoria | null;
 
   @Column({ type: 'enum', enum: AtestadoStatus, default: AtestadoStatus.PENDING })
   status!: AtestadoStatus;

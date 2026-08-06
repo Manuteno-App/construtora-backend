@@ -283,6 +283,7 @@ describe('QualificationService.evaluateBundlePolicy', () => {
   it('does not count duplicated extracted service rows more than once', async () => {
     const duplicatedRow = {
       atestadoId: 'A1',
+      serviceId: 'service-1',
       filename: 'A1.pdf',
       obraNome: 'Obra A1',
       local: null,
@@ -311,5 +312,68 @@ describe('QualificationService.evaluateBundlePolicy', () => {
     expect(aggregated).toHaveLength(1);
     expect(aggregated[0].totalQuantidade).toBe(439140);
     expect(aggregated[0].servicos).toHaveLength(1);
+  });
+});
+
+
+describe('QualificationService service-item aggregation', () => {
+  it('sums distinct matching items from the same atestado', async () => {
+    const service = new QualificationService(
+      { query: jest.fn() } as unknown as DataSource,
+      { convertQuantity: jest.fn(), normalizeServiceKey: jest.fn() } as any,
+    );
+    const baseRow = {
+      atestadoId: 'A1',
+      serviceId: 'service-1',
+      filename: 'A1.pdf',
+      obraNome: 'Obra A1',
+      local: null,
+      dataInicio: null,
+      dataFim: null,
+      valor: null,
+      contratoNumero: null,
+      numeroAtestado: null,
+      extensaoKm: null,
+      extensaoDeclaradaKm: null,
+      kmInicial: null,
+      kmFinal: null,
+      extensaoCalculadaKm: null,
+      descricao: 'Regularizacao do subleito',
+      quantidade: '400000',
+      unidade: 'm2',
+      unitId: 'unit-m2',
+      matchType: 'POR_TERMOS' as const,
+      matchRank: 2,
+      normalizedServiceKey: 'regularizacao-subleito',
+      itemCode: null,
+      pageNumber: null,
+      baixaConfianca: false,
+    };
+
+    const aggregated = await (service as any).aggregateRowsByAtestado([
+      baseRow,
+      { ...baseRow, serviceId: 'service-2', quantidade: '350000' },
+    ]);
+
+    expect(aggregated[0].totalQuantidade).toBe(750000);
+    expect(aggregated[0].servicos).toHaveLength(2);
+  });
+});
+describe('QualificationService extension filter', () => {
+  it('uses the informed extension as an exact criterion for the matched service', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    const service = new QualificationService(
+      { query } as unknown as DataSource,
+      { convertQuantity: jest.fn(), normalizeServiceKey: jest.fn() } as any,
+    );
+
+    await service.findAtestadosComServico(['Roçada Manual'], {
+      extensaoKm: 42,
+    });
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('o.extensao_km = $3');
+    expect(sql).not.toContain('o.extensao_km >=');
+    expect(params).toEqual(['rocada-manual', 'Roçada Manual', 42]);
   });
 });

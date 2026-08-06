@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { DefaultTypeOrmRepository } from '../../../../common/repository/default-typeorm.repository';
-import { Atestado, AtestadoStatus } from '../entity/atestado.entity';
+import { Atestado, AtestadoCategoria, AtestadoStatus } from '../entity/atestado.entity';
 
 @Injectable()
 export class AtestadoRepository extends DefaultTypeOrmRepository<Atestado> {
@@ -58,7 +58,7 @@ export class AtestadoRepository extends DefaultTypeOrmRepository<Atestado> {
     return qb.getManyAndCount();
   }
 
-  async createAndSave(data: { s3Key: string; originalFilename: string }): Promise<Atestado> {
+  async createAndSave(data: { s3Key: string; originalFilename: string; categoria?: AtestadoCategoria }): Promise<Atestado> {
     const entity = super.create({ ...data, status: AtestadoStatus.PENDING });
     return (await super.save(entity)) as Atestado;
   }
