@@ -550,7 +550,10 @@ export class QualificationService {
   private sourceQuantity(source: QualificationSource): number {
     return (source.servicos ?? []).reduce(
       (sum, service) =>
-        sum + (service.quantidadeConvertida ?? service.quantidade ?? 0),
+        sum +
+        (service.conversionUnavailableReason
+          ? 0
+          : (service.quantidadeConvertida ?? service.quantidade ?? 0)),
       0,
     );
   }
@@ -1298,17 +1301,26 @@ export class QualificationService {
               row.valor != null ? parseFloat(String(row.valor)) : undefined,
             contratoNumero: row.contratoNumero ?? undefined,
             numeroAtestado: row.numeroAtestado ?? undefined,
-            numeroPrincipal: row.numeroAtestado ?? row.contratoNumero ?? undefined,
+            numeroPrincipal:
+              row.numeroAtestado ?? row.contratoNumero ?? undefined,
             numeroPrincipalOrigem: row.numeroAtestado
               ? 'ATESTADO'
               : row.contratoNumero
                 ? 'CONTRATO'
                 : undefined,
-            extensaoKm: row.extensaoKm == null ? undefined : Number(row.extensaoKm),
-            extensaoDeclaradaKm: row.extensaoDeclaradaKm == null ? undefined : Number(row.extensaoDeclaradaKm),
-            kmInicial: row.kmInicial == null ? undefined : Number(row.kmInicial),
+            extensaoKm:
+              row.extensaoKm == null ? undefined : Number(row.extensaoKm),
+            extensaoDeclaradaKm:
+              row.extensaoDeclaradaKm == null
+                ? undefined
+                : Number(row.extensaoDeclaradaKm),
+            kmInicial:
+              row.kmInicial == null ? undefined : Number(row.kmInicial),
             kmFinal: row.kmFinal == null ? undefined : Number(row.kmFinal),
-            extensaoCalculadaKm: row.extensaoCalculadaKm == null ? undefined : Number(row.extensaoCalculadaKm),
+            extensaoCalculadaKm:
+              row.extensaoCalculadaKm == null
+                ? undefined
+                : Number(row.extensaoCalculadaKm),
           },
           totalQuantidade: 0,
           servicos: [],
