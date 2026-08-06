@@ -280,4 +280,36 @@ describe('QualificationService.evaluateBundlePolicy', () => {
     expect(coverage.qualifyingAtestados).toEqual([]);
     expect(coverage.matchingAtestados).toHaveLength(4);
   });
+  it('does not count duplicated extracted service rows more than once', async () => {
+    const duplicatedRow = {
+      atestadoId: 'A1',
+      filename: 'A1.pdf',
+      obraNome: 'Obra A1',
+      local: null,
+      dataInicio: null,
+      dataFim: null,
+      valor: null,
+      contratoNumero: null,
+      descricao: 'Regularizacao do subleito',
+      quantidade: '439140',
+      unidade: 'm2',
+      unitId: 'unit-m2',
+      matchType: 'POR_TERMOS' as const,
+      matchRank: 2,
+      normalizedServiceKey: 'regularizacao-subleito',
+      itemCode: '2.3',
+      pageNumber: null,
+      baixaConfianca: false,
+    };
+
+    const aggregated = await (service as any).aggregateRowsByAtestado([
+      duplicatedRow,
+      { ...duplicatedRow, itemCode: null },
+      { ...duplicatedRow, unidade: 'm²' },
+    ]);
+
+    expect(aggregated).toHaveLength(1);
+    expect(aggregated[0].totalQuantidade).toBe(439140);
+    expect(aggregated[0].servicos).toHaveLength(1);
+  });
 });

@@ -1256,10 +1256,19 @@ export class QualificationService {
         servicos: ServicoBuscado[];
       }
     >();
+    const countedServices = new Set<string>();
 
     for (const row of rows) {
       const quantity =
         row.quantidade != null ? parseFloat(row.quantidade) : undefined;
+      const serviceKey = [
+        row.atestadoId,
+        row.normalizedServiceKey ?? this.normalizeSearchText(row.descricao),
+        row.unitId ?? row.unidade ?? '',
+        quantity ?? '',
+      ].join('|');
+      if (quantity !== undefined && countedServices.has(serviceKey)) continue;
+      if (quantity !== undefined) countedServices.add(serviceKey);
       let convertedQuantity = quantity;
       let conversionKind: ServicoBuscado['conversionKind'];
       let conversionFactor: number | undefined;
