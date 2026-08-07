@@ -59,7 +59,7 @@ export class AtestadosController {
   @Patch(':id')
   @ApiOperation({ summary: 'Renomeia um atestado e atualiza as referências indexadas' })
   rename(
-    @Param(':id', ParseUUIDPipe) id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: RenameAtestadoDto,
   ) {
     return this.documentService.rename(id, body.originalFilename);
