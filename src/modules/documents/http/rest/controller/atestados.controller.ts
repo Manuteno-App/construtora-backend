@@ -1,4 +1,5 @@
 import {
+    Body,
     Controller,
     Delete,
     Get,
@@ -6,11 +7,13 @@ import {
     HttpStatus,
     Param,
     ParseUUIDPipe,
+    Patch,
     Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { DocumentService } from '../../../core/service/document.service';
 import { AtestadoStatus } from '../../../persistence/entity/atestado.entity';
+import { RenameAtestadoDto } from '../dto/rename-atestado.dto';
 
 @ApiTags('atestados')
 @Controller('atestados')
@@ -51,6 +54,15 @@ export class AtestadosController {
   async signedUrl(@Param('id', ParseUUIDPipe) id: string) {
     const url = await this.documentService.getSignedDownloadUrl(id);
     return { url };
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Renomeia um atestado e atualiza as referências indexadas' })
+  rename(
+    @Param(':id', ParseUUIDPipe) id: string,
+    @Body() body: RenameAtestadoDto,
+  ) {
+    return this.documentService.rename(id, body.originalFilename);
   }
 
   @Delete(':id')

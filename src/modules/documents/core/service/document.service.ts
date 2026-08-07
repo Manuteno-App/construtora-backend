@@ -1,6 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { NotFoundDomainException } from '../../../../common/exception/not-found-domain.exception';
 import { StorageService } from '../../../infrastructure/storage/storage.service';
+import { Chunk } from '../../../ingestion/persistence/entity/chunk.entity';
 import { Atestado, AtestadoCategoria, AtestadoStatus } from '../../persistence/entity/atestado.entity';
 import { AtestadoRepository } from '../../persistence/repository/atestado.repository';
 
@@ -22,6 +25,7 @@ export class DocumentService {
   constructor(
     private readonly atestadoRepo: AtestadoRepository,
     private readonly storage: StorageService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   async createAtestado(params: { s3Key: string; originalFilename: string }): Promise<Atestado> {
@@ -64,6 +68,29 @@ export class DocumentService {
 
   async updateLastReprocessedAt(id: string): Promise<void> {
     await this.atestadoRepo.updateLastReprocessedAt(id);
+  }
+
+  async rename(id: string, originalFilename: string): Promise<Atestado> {
+    const baseName = originalFilename.trim().replace(/\.pdf$/i, '').trim();
+    if (!baseName) {
+      throw new BadRequestException('Informe um nome de arquivo válido');
+    }
+
+    const normalizedFilename = `${baseName}.pdf`;
+    if (normalizedFilename.length > 255) {
+      throw new BadRequestException('O nome do arquivo deve ter no máximo 255 caracteres');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const atestado = await manager.findOne(Atestado, { where: { id } });
+      if (!atestado) throw new NotFoundDomainException('Atestado', id);
+
+      const categoria = categoryFromFilename(normalizedFilename) ?? null;
+      await manager.update(Atestado, { id }, { originalFilename: normalizedFilename, categoria });
+      await manager.update(Chunk, { atestadoId: id }, { originalFilename: normalizedFilename });
+
+      return { ...atestado, originalFilename: normalizedFilename, categoria };
+    });
   }
 
   async getSignedDownloadUrl(id: string): Promise<string> {
