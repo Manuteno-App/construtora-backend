@@ -23,6 +23,10 @@ export class ConversationTurn {
   @Column({ type: 'jsonb', nullable: true })
   sources?: Record<string, unknown>[];
 
+  /** Structured plan/result or a pending clarification for the capability chat. */
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: Record<string, unknown>;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 }

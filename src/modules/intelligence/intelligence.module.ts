@@ -1,10 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ExtractionModule } from '../extraction/extraction.module';
-import { IndexingModule } from '../indexing/indexing.module';
 import { QualificationModule } from '../qualification/qualification.module';
-import { HybridRetrieverService } from './core/service/hybrid-retriever.service';
-import { ReasoningEngineService } from './core/service/reasoning-engine.service';
+import { CapabilityChatService } from './core/service/capability-chat.service';
 import { IntelligenceController } from './http/rest/controller/intelligence.controller';
 import { ConversationTurn } from './persistence/entity/conversation-turn.entity';
 import { ConversationTurnRepository } from './persistence/repository/conversation-turn.repository';
@@ -12,14 +9,11 @@ import { ConversationTurnRepository } from './persistence/repository/conversatio
 @Module({
   imports: [
     TypeOrmModule.forFeature([ConversationTurn]),
-    ExtractionModule,
-    IndexingModule,
     QualificationModule,
   ],
   providers: [
     ConversationTurnRepository,
-    HybridRetrieverService,
-    ReasoningEngineService,
+    CapabilityChatService,
   ],
   controllers: [IntelligenceController],
 })

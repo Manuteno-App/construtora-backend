@@ -22,11 +22,16 @@ export class ConversationTurnRepository extends DefaultTypeOrmRepository<Convers
     });
   }
 
+  async findById(id: string): Promise<ConversationTurn | null> {
+    return this.findOne({ where: { id } });
+  }
+
   async saveTurn(data: {
     sessionId: string;
     role: ConversationRole;
     content: string;
     sources?: Record<string, unknown>[];
+    metadata?: Record<string, unknown>;
   }): Promise<ConversationTurn> {
     const entity = super.create(data);
     return (await super.save(entity)) as ConversationTurn;
