@@ -125,7 +125,7 @@ export class CapabilityChatService {
           },
         } as never,
         messages: [
-          { role: 'system', content: 'Converta perguntas sobre acervo técnico em JSON. Não crie SQL. QUALIFICATION é exclusivamente para verificar se o acervo atende a uma exigência (edital, mínimo, comprovação). INVENTORY é para consultas descritivas ao acervo, como "quais atestados têm CBUQ e em qual quantidade?"; nessas consultas extraia o serviço e não infira mínimo, edital ou não atendimento. REGIONAL_EXPERIENCE é para estado/órgão; TECHNICAL_EXPERIENCE para engenheiro/responsável; NARRATIVE para demais perguntas. Use MANY como padrão para somatório. Para perguntas de total convertido sem mínimo (ex.: quantos hectares), defina aggregateTotal=true e informe a unidade de destino no serviço. Só peça esclarecimento se a ausência impedir cálculo.' },
+          { role: 'system', content: 'Converta perguntas sobre acervo técnico em JSON. Não crie SQL. A propriedade services[].query DEVE conter somente o nome técnico do serviço, material ou atividade pesquisada — nunca copie a pergunta, verbos de intenção, quantidade, edital ou referência a atestados. Exemplo: para "Preciso de 2 atestados juntos que provem Regularização do sub-leito", use query="Regularização do sub-leito", operation="QUALIFICATION", bundleMode="MAX" e maxAtestados=2. QUALIFICATION é exclusivamente para verificar se o acervo atende a uma exigência (edital, mínimo, comprovação). INVENTORY é para consultas descritivas ao acervo, como "quais atestados têm CBUQ e em qual quantidade?"; nessas consultas extraia o serviço e não infira mínimo, edital ou não atendimento. REGIONAL_EXPERIENCE é para estado/órgão; TECHNICAL_EXPERIENCE para engenheiro/responsável; NARRATIVE para demais perguntas. Use MANY como padrão para somatório. Para perguntas de total convertido sem mínimo (ex.: quantos hectares), defina aggregateTotal=true e informe a unidade de destino no serviço. Só peça esclarecimento se a ausência impedir cálculo.' },
           { role: 'user', content: query },
         ],
       });
@@ -143,7 +143,7 @@ export class CapabilityChatService {
     const lower = query.toLowerCase();
     const regional = /\b(estado|para[ií]ba|piau[ií]|bahia|cear[aá]|maranh[aã]o|regional)\b/.test(lower);
     const technical = /respons[aá]vel t[eé]cnico|engenheir|acervo.*pavimenta/.test(lower);
-    const max = query.match(/(?:no m[aá]ximo|at[eé])\s+(\d+)\s+atestados?/i);
+    const max = query.match(/(?:no m[aá]ximo|at[eé]|preciso\s+de)\s+(\d+)\s+atestados?(?:\s+juntos?)?/i);
     const quantity = query.match(/(?:m[ií]nimo(?:\s+de)?|pelo menos|exige|exigência(?:\s+de)?|\bde\s+)\s*(\d+(?:[.]\d+)*(?:,\d+)?(?:\s+mil)?)\s*(m²|m³|m2|m3|metros?|m\b|ha|hectares?|toneladas?|t\b|km)?/i);
     const minQuantidade = quantity ? this.parseQuantity(quantity[1]) : undefined;
     const unidade = this.normalizeUnit(quantity?.[2]);
@@ -160,13 +160,14 @@ export class CapabilityChatService {
       ?.replace(/^(?:edital\s+pede\s+(?:a|o)\s+|preciso\s+informar\s+(?:o|a)\s+)/i, '')
       .split(/\s*,\s*/)[0]
       .trim();
-    const service = requirementSentence
+    const requirementService = requirementSentence.match(/\b(?:provem|comprovem|comprovar|tenham|possuam)\s+(.+?)(?:[?!.]|$)/i)?.[1]?.trim();
+    const service = (requirementService ?? requirementSentence)
       .replace(/.*?(?:m[ií]nimo(?:\s+de)?|pelo menos|exige|exigência(?:\s+de)?)\s*\d+(?:[.]\d+)*(?:,\d+)?(?:\s+mil)?\s*(?:m²|m³|m2|m3|metros?|m\b|ha|hectares?|toneladas?|t\b|km)?\s*(?:de\s*)?/i, '')
       .trim();
     const inventoryService = this.extractInventoryService(query) ?? (this.isBareServiceQuery(query) ? query.trim() : undefined);
     const requiresSingleAtestado = /(?:em|num|no)\s+(?:um|único)\s+atestado/i.test(query);
     return {
-      operation: regional ? 'REGIONAL_EXPERIENCE' : technical ? 'TECHNICAL_EXPERIENCE' : inventory ? 'INVENTORY' : aggregateTotal || minQuantidade || /comprovar|atende/i.test(query) ? 'QUALIFICATION' : 'NARRATIVE',
+      operation: regional ? 'REGIONAL_EXPERIENCE' : technical ? 'TECHNICAL_EXPERIENCE' : inventory ? 'INVENTORY' : Boolean(max) || aggregateTotal || minQuantidade || /comprovar|provem|comprovem|atende/i.test(query) ? 'QUALIFICATION' : 'NARRATIVE',
       services: (inventory ? inventoryService : aggregateTotal ? convertedService : service) ? [{ query: inventory ? inventoryService! : aggregateTotal ? convertedService! : service, minQuantidade: inventory ? undefined : minQuantidade, unidade: aggregateTotal ? targetUnit : unidade }] : [],
       aggregateTotal: inventory ? false : aggregateTotal,
       // When the edital does not constrain the number of documents, assess the
@@ -180,7 +181,7 @@ export class CapabilityChatService {
   }
 
   private normalizePlan(plan: CapabilityPlan, fallback: CapabilityPlan): CapabilityPlan {
-    const services = (plan.services ?? []).filter((service) => service.query?.trim()).map((service) => ({
+    const services = (plan.services ?? []).filter((service) => this.isSemanticServiceQuery(service.query)).map((service) => ({
       query: service.query.trim(), minQuantidade: service.minQuantidade ?? undefined, unidade: service.unidade ?? undefined,
     }));
     const filters = plan.filters ? Object.fromEntries(Object.entries(plan.filters).filter(([, value]) => value != null)) as QualificationFilters : undefined;
@@ -209,6 +210,7 @@ export class CapabilityChatService {
       bundleMode: shouldUseCumulativeDefault
         ? 'MANY'
         : plan.bundleMode ?? fallback.bundleMode,
+      maxAtestados: plan.maxAtestados ?? fallback.maxAtestados,
       // A missing proof-mode rule does not block the calculation: MANY is the
       // documented default. Keep the conversation moving instead of returning
       // an avoidable clarification for an otherwise complete requirement.
@@ -289,6 +291,13 @@ export class CapabilityChatService {
     const asksForQuantity = /\b(?:qual(?:\s+é)?|quantos?|quanto|listar|mostre)\b/.test(lower) && /\b(?:quantidade|quantitativo|total)\b/.test(lower);
     const isRequirement = /\b(?:edital|exige|exigência|requisito|mínimo|pelo menos|comprovar|atende|atender|preciso)\b/.test(lower);
     return (asksForDocuments || asksForQuantity) && !isRequirement;
+  }
+
+  private isSemanticServiceQuery(query: string | undefined): boolean {
+    if (!query?.trim()) return false;
+    // This is deliberately a validation guard, not an attempt to enumerate
+    // Portuguese phrasings. The model remains responsible for extraction.
+    return !/\b(?:preciso|quero|liste|listar|atestado|atestados|acervo|edital|prove|provem|comprove|comprovem|quantos?|quanto|atende)\b/i.test(query);
   }
 
   private isBareServiceQuery(query: string): boolean {

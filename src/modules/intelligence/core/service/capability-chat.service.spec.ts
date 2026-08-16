@@ -106,6 +106,33 @@ describe('CapabilityChatService planning', () => {
     });
   });
 
+  it('extracts the service from a request for a combined set of atestados', () => {
+    const plan = (service as any).heuristicPlan(
+      'Preciso de 2 atestados juntos que provem Regularização do sub-leito',
+    ) as CapabilityPlan;
+
+    expect(plan).toMatchObject({
+      operation: 'QUALIFICATION',
+      bundleMode: 'MAX',
+      maxAtestados: 2,
+      services: [{ query: 'Regularização do sub-leito' }],
+    });
+  });
+
+  it('prefers a semantically extracted service from the AI plan over the heuristic fallback', () => {
+    const fallback = (service as any).heuristicPlan(
+      'Preciso de 2 atestados juntos que provem Regularização do sub-leito',
+    ) as CapabilityPlan;
+    const normalized = (service as any).normalizePlan({
+      ...fallback,
+      services: [{ query: 'Regularização de subleito' }],
+      bundleMode: 'MAX',
+      maxAtestados: 2,
+    }, fallback) as CapabilityPlan;
+
+    expect(normalized.services).toEqual([{ query: 'Regularização de subleito', minQuantidade: undefined, unidade: undefined }]);
+  });
+
   it('totals converted quantities and returns every contributing atestado', async () => {
     const plan = (service as any).heuristicPlan(
       'O edital pede a imprimação em hectares, mas nossos atestados registram em m². Convertendo, quantos hectares de imprimação a empresa comprova no total?',
