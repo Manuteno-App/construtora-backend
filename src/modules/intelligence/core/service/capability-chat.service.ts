@@ -18,6 +18,7 @@ export type ChatOperation = 'QUALIFICATION' | 'REGIONAL_EXPERIENCE' | 'TECHNICAL
 export interface CapabilityPlan {
   operation: ChatOperation;
   services: Array<{ query: string; minQuantidade?: number; unidade?: string }>;
+  aggregateTotal?: boolean;
   bundleMode?: 'ONE' | 'MANY' | 'MAX';
   maxAtestados?: number;
   filters?: QualificationFilters;
@@ -100,10 +101,11 @@ export class CapabilityChatService {
             strict: true,
             schema: {
               type: 'object', additionalProperties: false,
-              required: ['operation', 'services', 'bundleMode', 'maxAtestados', 'filters', 'state', 'technicalArea', 'needsClarification'],
+              required: ['operation', 'services', 'aggregateTotal', 'bundleMode', 'maxAtestados', 'filters', 'state', 'technicalArea', 'needsClarification'],
               properties: {
                 operation: { type: 'string', enum: ['QUALIFICATION', 'REGIONAL_EXPERIENCE', 'TECHNICAL_EXPERIENCE', 'NARRATIVE'] },
                 services: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['query', 'minQuantidade', 'unidade'], properties: { query: { type: 'string' }, minQuantidade: { type: ['number', 'null'] }, unidade: { type: ['string', 'null'] } } } },
+                aggregateTotal: { type: ['boolean', 'null'] },
                 bundleMode: { type: ['string', 'null'], enum: ['ONE', 'MANY', 'MAX', null] },
                 maxAtestados: { type: ['number', 'null'] },
                 filters: {
@@ -123,7 +125,7 @@ export class CapabilityChatService {
           },
         } as never,
         messages: [
-          { role: 'system', content: 'Converta perguntas sobre acervo técnico em JSON. Não crie SQL. QUALIFICATION é para comprovar quantidade/combinação; REGIONAL_EXPERIENCE para estado/órgão; TECHNICAL_EXPERIENCE para engenheiro/responsável; NARRATIVE para demais perguntas. Use MANY como padrão para somatório. Só peça esclarecimento se a ausência impedir cálculo.' },
+          { role: 'system', content: 'Converta perguntas sobre acervo técnico em JSON. Não crie SQL. QUALIFICATION é para comprovar quantidade/combinação; REGIONAL_EXPERIENCE para estado/órgão; TECHNICAL_EXPERIENCE para engenheiro/responsável; NARRATIVE para demais perguntas. Use MANY como padrão para somatório. Para perguntas de total convertido sem mínimo (ex.: quantos hectares), defina aggregateTotal=true e informe a unidade de destino no serviço. Só peça esclarecimento se a ausência impedir cálculo.' },
           { role: 'user', content: query },
         ],
       });
@@ -145,13 +147,30 @@ export class CapabilityChatService {
     const quantity = query.match(/(?:m[ií]nimo(?:\s+de)?|pelo menos|\bde\s+)\s*([\d.]+(?:,\d+)?)\s*(m²|m³|m2|m3|ha|hectares?|toneladas?|t\b|km)?/i);
     const minQuantidade = quantity ? Number(quantity[1].replace(/\.(?=\d{3}(?:\D|$))/g, '').replace(',', '.')) : undefined;
     const unidade = quantity?.[2]?.replace(/m2/i, 'm²').replace(/m3/i, 'm³');
-    const service = query
+    // Quantitative questions frequently include a second sentence such as
+    // "Consigo comprovar?". That sentence is not part of the service name and
+    // makes the full-text service search unnecessarily restrictive.
+    const requirementSentence = query.split(/(?<=[a-zA-Z²³])\s*[.?!]\s*/)[0];
+    const aggregateTotal = /\b(?:quantos?|total|convertendo|converter)\b/i.test(query);
+    const targetUnit = query.match(/\bem\s+(hectares?|ha|m²|m2|m³|m3|km|toneladas?)(?![a-z])/i)?.[1]
+      ?.replace(/m2/i, 'm²').replace(/m3/i, 'm³');
+    const convertedService = requirementSentence
+      .match(/\b(?:de|o|a)\s+(.+?)\s+em\s+(?:hectares?|ha|m²|m2|m³|m3|km|toneladas?)(?![a-z])/i)?.[1]
+      ?.replace(/^(?:edital\s+pede\s+(?:a|o)\s+|preciso\s+informar\s+(?:o|a)\s+)/i, '')
+      .split(/\s*,\s*/)[0]
+      .trim();
+    const service = requirementSentence
       .replace(/.*?(?:m[ií]nimo(?:\s+de)?|pelo menos)\s*[\d.,]+\s*(?:m²|m³|m2|m3|ha|hectares?|toneladas?|t\b)?\s*(?:de\s*)?/i, '')
-      .replace(/[?.].*$/, '').trim();
+      .trim();
+    const requiresSingleAtestado = /(?:em|num|no)\s+(?:um|único)\s+atestado/i.test(query);
     return {
       operation: regional ? 'REGIONAL_EXPERIENCE' : technical ? 'TECHNICAL_EXPERIENCE' : minQuantidade || /comprovar|atende|atestados?/i.test(query) ? 'QUALIFICATION' : 'NARRATIVE',
-      services: service ? [{ query: service, minQuantidade, unidade }] : [],
-      bundleMode: max ? 'MAX' : /somando|somat[oó]rio|total|acervo/i.test(lower) ? 'MANY' : 'ONE',
+      services: (aggregateTotal ? convertedService : service) ? [{ query: aggregateTotal ? convertedService! : service, minQuantidade, unidade: aggregateTotal ? targetUnit : unidade }] : [],
+      aggregateTotal,
+      // When the edital does not constrain the number of documents, assess the
+      // available acervo cumulatively. This is also the Chat's documented
+      // default, and avoids discarding partial certificates.
+      bundleMode: max ? 'MAX' : requiresSingleAtestado ? 'ONE' : 'MANY',
       maxAtestados: max ? Number(max[1]) : undefined,
       state: regional ? this.extractState(query) : undefined,
       technicalArea: technical ? 'pavimentação asfáltica' : undefined,
@@ -163,7 +182,37 @@ export class CapabilityChatService {
       query: service.query.trim(), minQuantidade: service.minQuantidade ?? undefined, unidade: service.unidade ?? undefined,
     }));
     const filters = plan.filters ? Object.fromEntries(Object.entries(plan.filters).filter(([, value]) => value != null)) as QualificationFilters : undefined;
-    return { ...fallback, ...plan, filters, services: services.length ? services : fallback.services, bundleMode: plan.bundleMode ?? fallback.bundleMode };
+    const shouldUseCumulativeDefault =
+      fallback.operation === 'QUALIFICATION' &&
+      fallback.bundleMode === 'MANY' &&
+      fallback.services.some((service) => service.minQuantidade !== undefined);
+    const useFallbackRequirement =
+      shouldUseCumulativeDefault && fallback.services.length === 1;
+    const useFallbackAggregate = fallback.aggregateTotal && fallback.services.length === 1;
+    return {
+      ...fallback,
+      ...plan,
+      filters,
+      // For a single, explicit numeric criterion the deterministic parser is
+      // more reliable than a generative paraphrase (which may include the
+      // surrounding conversational question in the service text).
+      services: useFallbackRequirement || useFallbackAggregate
+        ? fallback.services
+        : services.length
+          ? services
+          : fallback.services,
+      bundleMode: shouldUseCumulativeDefault
+        ? 'MANY'
+        : plan.bundleMode ?? fallback.bundleMode,
+      // A missing proof-mode rule does not block the calculation: MANY is the
+      // documented default. Keep the conversation moving instead of returning
+      // an avoidable clarification for an otherwise complete requirement.
+      needsClarification:
+        shouldUseCumulativeDefault && plan.needsClarification === 'PROOF_MODE'
+          ? undefined
+          : plan.needsClarification ?? undefined,
+      aggregateTotal: useFallbackAggregate ? true : plan.aggregateTotal ?? false,
+    };
   }
 
   private async resumePlan(clarification: { turnId: string; value: string }, query: string): Promise<CapabilityPlan> {
@@ -191,12 +240,42 @@ export class CapabilityChatService {
     if (plan.operation === 'QUALIFICATION') {
       const services: ServiceRequirement[] = plan.services;
       if (!services.length) return { answer: 'Preciso do serviço ou material que deve ser comprovado.', sources: [] };
+      if (plan.aggregateTotal) return this.aggregateQualificationTotal(services[0], plan.filters);
       const request: BundleEvaluationRequest = { bundleMode: plan.bundleMode ?? 'MANY', ...(plan.bundleMode === 'MAX' ? { maxAtestados: plan.maxAtestados ?? 1 } : {}), services, filters: plan.filters };
       return { result: await this.qualification.evaluateBundlePolicy(request) };
     }
     if (plan.operation === 'REGIONAL_EXPERIENCE') return this.regionalExperience(plan.state);
     if (plan.operation === 'TECHNICAL_EXPERIENCE') return this.technicalExperience(plan.technicalArea);
     return { answer: 'Reformule indicando o serviço, quantidade, unidade ou obra que deseja analisar.', sources: [] };
+  }
+
+  private async aggregateQualificationTotal(service: ServiceRequirement, filters?: QualificationFilters): Promise<{ answer: string; sources: CapabilitySource[] }> {
+    const cumulative = await this.qualification.findCumulativoAtestados(
+      [service.query],
+      0,
+      service.unidade,
+      filters,
+    );
+    if (!cumulative.atestados.length) {
+      return { answer: `Não encontrei atestados com ${service.query} para totalizar.`, sources: [] };
+    }
+    const unit = service.unidade ?? 'na unidade registrada';
+    const total = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(cumulative.totalQuantidade);
+    const usesTechnicalConversion = cumulative.atestados.some((source) =>
+      source.servicos?.some((item) => item.conversionKind === 'TECHNICAL'),
+    );
+    const unavailableConversions = cumulative.atestados.flatMap((source) => source.servicos ?? [])
+      .filter((item) => item.conversionUnavailableReason).length;
+    const conversionNote = usesTechnicalConversion
+      ? ' O valor é aproximado, pois usa uma conversão técnica baseada na densidade da mistura.'
+      : '';
+    const unavailableNote = unavailableConversions
+      ? ` ${unavailableConversions} item(ns) sem regra de conversão aprovada não foram incluídos no total.`
+      : '';
+    return {
+      answer: `A empresa comprova ${total} ${unit} de ${service.query} no total, em ${cumulative.atestados.length} atestado(s). Veja os documentos abaixo.${conversionNote}${unavailableNote}`,
+      sources: cumulative.atestados.map((source) => ({ atestadoId: source.atestadoId, filename: source.filename, pagina: source.servicos?.find((item) => item.pageNumber)?.pageNumber ?? 1, trecho: source.obraNome })),
+    };
   }
 
   private async regionalExperience(state?: string): Promise<{ answer: string; sources: CapabilitySource[] }> {
@@ -220,14 +299,46 @@ export class CapabilityChatService {
   }
 
   private summarizeQualification(result: BundleEvaluationResult): string {
-    if (result.fullyQualified) return `Atende aos requisitos com ${result.usedAtestadosCount} atestado(s). Veja a cobertura e os documentos selecionados abaixo.`;
+    if (result.fullyQualified) {
+      const combination = this.describeSelectedAtestados(result)
+        .map((item) => `${item.filename}: ${item.trecho}`)
+        .join('; ');
+      return `Atende aos requisitos com ${result.usedAtestadosCount} atestado(s). Melhor combinação: ${combination}.`;
+    }
     const failures = result.coverageByService.filter((item) => !item.qualified).map((item) => item.serviceQuery);
     return `O acervo não atende integralmente aos requisitos${failures.length ? ` para: ${failures.join(', ')}` : ''}. Veja os quantitativos e documentos disponíveis abaixo.`;
   }
 
   private sourcesFromQualification(result: BundleEvaluationResult): CapabilitySource[] {
+    return this.describeSelectedAtestados(result);
+  }
+
+  private describeSelectedAtestados(result: BundleEvaluationResult): CapabilitySource[] {
     const seen = new Set<string>();
-    return result.selectedAtestados.filter((source) => !seen.has(source.atestadoId) && Boolean(seen.add(source.atestadoId))).map((source) => ({ atestadoId: source.atestadoId, filename: source.filename, pagina: source.servicos?.find((item) => item.pageNumber)?.pageNumber ?? 1, trecho: source.obraNome }));
+    return result.selectedAtestados
+      .filter((source) => !seen.has(source.atestadoId) && Boolean(seen.add(source.atestadoId)))
+      .map((source) => {
+        const coverage = result.coverageByService.flatMap((criterion) => {
+          const selected = criterion.selectedAtestados?.find((item) => item.atestadoId === source.atestadoId);
+          if (!selected) return [];
+          const quantities = (selected.servicos ?? []).map((item) => {
+            const quantity = item.quantidadeConvertida ?? item.quantidade;
+            const formatted = quantity === undefined
+              ? item.descricao
+              : `${item.descricao}: ${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(quantity)} ${item.unidadeComparada ?? item.unidade ?? ''}`.trim();
+            return formatted;
+          });
+          return quantities.length ? quantities : [criterion.serviceQuery];
+        });
+        const identifier = source.numeroPrincipal ? `Atestado ${source.numeroPrincipal}` : undefined;
+        const context = [identifier, source.obraNome, ...coverage].filter(Boolean).join(' — ');
+        return {
+          atestadoId: source.atestadoId,
+          filename: source.filename,
+          pagina: source.servicos?.find((item) => item.pageNumber)?.pageNumber ?? 1,
+          trecho: context || source.obraNome,
+        };
+      });
   }
 
   private async persist(sessionId: string | undefined, query: string, answer: string, sources: CapabilitySource[], metadata: Record<string, unknown>): Promise<void> {
