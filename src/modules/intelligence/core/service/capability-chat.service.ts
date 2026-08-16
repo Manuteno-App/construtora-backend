@@ -13,7 +13,7 @@ import {
 import { ConversationRole } from '../../persistence/entity/conversation-turn.entity';
 import { ConversationTurnRepository } from '../../persistence/repository/conversation-turn.repository';
 
-export type ChatOperation = 'QUALIFICATION' | 'REGIONAL_EXPERIENCE' | 'TECHNICAL_EXPERIENCE' | 'NARRATIVE';
+export type ChatOperation = 'QUALIFICATION' | 'INVENTORY' | 'REGIONAL_EXPERIENCE' | 'TECHNICAL_EXPERIENCE' | 'NARRATIVE';
 
 export interface CapabilityPlan {
   operation: ChatOperation;
@@ -103,7 +103,7 @@ export class CapabilityChatService {
               type: 'object', additionalProperties: false,
               required: ['operation', 'services', 'aggregateTotal', 'bundleMode', 'maxAtestados', 'filters', 'state', 'technicalArea', 'needsClarification'],
               properties: {
-                operation: { type: 'string', enum: ['QUALIFICATION', 'REGIONAL_EXPERIENCE', 'TECHNICAL_EXPERIENCE', 'NARRATIVE'] },
+                operation: { type: 'string', enum: ['QUALIFICATION', 'INVENTORY', 'REGIONAL_EXPERIENCE', 'TECHNICAL_EXPERIENCE', 'NARRATIVE'] },
                 services: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['query', 'minQuantidade', 'unidade'], properties: { query: { type: 'string' }, minQuantidade: { type: ['number', 'null'] }, unidade: { type: ['string', 'null'] } } } },
                 aggregateTotal: { type: ['boolean', 'null'] },
                 bundleMode: { type: ['string', 'null'], enum: ['ONE', 'MANY', 'MAX', null] },
@@ -125,7 +125,7 @@ export class CapabilityChatService {
           },
         } as never,
         messages: [
-          { role: 'system', content: 'Converta perguntas sobre acervo técnico em JSON. Não crie SQL. QUALIFICATION é para comprovar quantidade/combinação; REGIONAL_EXPERIENCE para estado/órgão; TECHNICAL_EXPERIENCE para engenheiro/responsável; NARRATIVE para demais perguntas. Use MANY como padrão para somatório. Para perguntas de total convertido sem mínimo (ex.: quantos hectares), defina aggregateTotal=true e informe a unidade de destino no serviço. Só peça esclarecimento se a ausência impedir cálculo.' },
+          { role: 'system', content: 'Converta perguntas sobre acervo técnico em JSON. Não crie SQL. QUALIFICATION é exclusivamente para verificar se o acervo atende a uma exigência (edital, mínimo, comprovação). INVENTORY é para consultas descritivas ao acervo, como "quais atestados têm CBUQ e em qual quantidade?"; nessas consultas extraia o serviço e não infira mínimo, edital ou não atendimento. REGIONAL_EXPERIENCE é para estado/órgão; TECHNICAL_EXPERIENCE para engenheiro/responsável; NARRATIVE para demais perguntas. Use MANY como padrão para somatório. Para perguntas de total convertido sem mínimo (ex.: quantos hectares), defina aggregateTotal=true e informe a unidade de destino no serviço. Só peça esclarecimento se a ausência impedir cálculo.' },
           { role: 'user', content: query },
         ],
       });
@@ -144,14 +144,15 @@ export class CapabilityChatService {
     const regional = /\b(estado|para[ií]ba|piau[ií]|bahia|cear[aá]|maranh[aã]o|regional)\b/.test(lower);
     const technical = /respons[aá]vel t[eé]cnico|engenheir|acervo.*pavimenta/.test(lower);
     const max = query.match(/(?:no m[aá]ximo|at[eé])\s+(\d+)\s+atestados?/i);
-    const quantity = query.match(/(?:m[ií]nimo(?:\s+de)?|pelo menos|\bde\s+)\s*([\d.]+(?:,\d+)?)\s*(m²|m³|m2|m3|ha|hectares?|toneladas?|t\b|km)?/i);
-    const minQuantidade = quantity ? Number(quantity[1].replace(/\.(?=\d{3}(?:\D|$))/g, '').replace(',', '.')) : undefined;
-    const unidade = quantity?.[2]?.replace(/m2/i, 'm²').replace(/m3/i, 'm³');
+    const quantity = query.match(/(?:m[ií]nimo(?:\s+de)?|pelo menos|exige|exigência(?:\s+de)?|\bde\s+)\s*(\d+(?:[.]\d+)*(?:,\d+)?(?:\s+mil)?)\s*(m²|m³|m2|m3|metros?|m\b|ha|hectares?|toneladas?|t\b|km)?/i);
+    const minQuantidade = quantity ? this.parseQuantity(quantity[1]) : undefined;
+    const unidade = this.normalizeUnit(quantity?.[2]);
     // Quantitative questions frequently include a second sentence such as
     // "Consigo comprovar?". That sentence is not part of the service name and
     // makes the full-text service search unnecessarily restrictive.
     const requirementSentence = query.split(/(?<=[a-zA-Z²³])\s*[.?!]\s*/)[0];
     const aggregateTotal = /\b(?:quantos?|total|convertendo|converter)\b/i.test(query);
+    const inventory = this.isInventoryQuery(query) || this.isBareServiceQuery(query);
     const targetUnit = query.match(/\bem\s+(hectares?|ha|m²|m2|m³|m3|km|toneladas?)(?![a-z])/i)?.[1]
       ?.replace(/m2/i, 'm²').replace(/m3/i, 'm³');
     const convertedService = requirementSentence
@@ -160,13 +161,14 @@ export class CapabilityChatService {
       .split(/\s*,\s*/)[0]
       .trim();
     const service = requirementSentence
-      .replace(/.*?(?:m[ií]nimo(?:\s+de)?|pelo menos)\s*[\d.,]+\s*(?:m²|m³|m2|m3|ha|hectares?|toneladas?|t\b)?\s*(?:de\s*)?/i, '')
+      .replace(/.*?(?:m[ií]nimo(?:\s+de)?|pelo menos|exige|exigência(?:\s+de)?)\s*\d+(?:[.]\d+)*(?:,\d+)?(?:\s+mil)?\s*(?:m²|m³|m2|m3|metros?|m\b|ha|hectares?|toneladas?|t\b|km)?\s*(?:de\s*)?/i, '')
       .trim();
+    const inventoryService = this.extractInventoryService(query) ?? (this.isBareServiceQuery(query) ? query.trim() : undefined);
     const requiresSingleAtestado = /(?:em|num|no)\s+(?:um|único)\s+atestado/i.test(query);
     return {
-      operation: regional ? 'REGIONAL_EXPERIENCE' : technical ? 'TECHNICAL_EXPERIENCE' : minQuantidade || /comprovar|atende|atestados?/i.test(query) ? 'QUALIFICATION' : 'NARRATIVE',
-      services: (aggregateTotal ? convertedService : service) ? [{ query: aggregateTotal ? convertedService! : service, minQuantidade, unidade: aggregateTotal ? targetUnit : unidade }] : [],
-      aggregateTotal,
+      operation: regional ? 'REGIONAL_EXPERIENCE' : technical ? 'TECHNICAL_EXPERIENCE' : inventory ? 'INVENTORY' : aggregateTotal || minQuantidade || /comprovar|atende/i.test(query) ? 'QUALIFICATION' : 'NARRATIVE',
+      services: (inventory ? inventoryService : aggregateTotal ? convertedService : service) ? [{ query: inventory ? inventoryService! : aggregateTotal ? convertedService! : service, minQuantidade: inventory ? undefined : minQuantidade, unidade: aggregateTotal ? targetUnit : unidade }] : [],
+      aggregateTotal: inventory ? false : aggregateTotal,
       // When the edital does not constrain the number of documents, assess the
       // available acervo cumulatively. This is also the Chat's documented
       // default, and avoids discarding partial certificates.
@@ -192,11 +194,14 @@ export class CapabilityChatService {
     return {
       ...fallback,
       ...plan,
+      // General lookup questions must never be transformed into an edital
+      // evaluation just because they mention an atestado or a quantity.
+      operation: fallback.operation === 'INVENTORY' ? 'INVENTORY' : plan.operation,
       filters,
       // For a single, explicit numeric criterion the deterministic parser is
       // more reliable than a generative paraphrase (which may include the
       // surrounding conversational question in the service text).
-      services: useFallbackRequirement || useFallbackAggregate
+      services: fallback.operation === 'INVENTORY' || useFallbackRequirement || useFallbackAggregate
         ? fallback.services
         : services.length
           ? services
@@ -211,7 +216,7 @@ export class CapabilityChatService {
         shouldUseCumulativeDefault && plan.needsClarification === 'PROOF_MODE'
           ? undefined
           : plan.needsClarification ?? undefined,
-      aggregateTotal: useFallbackAggregate ? true : plan.aggregateTotal ?? false,
+      aggregateTotal: fallback.operation === 'INVENTORY' ? false : useFallbackAggregate ? true : plan.aggregateTotal ?? false,
     };
   }
 
@@ -246,7 +251,75 @@ export class CapabilityChatService {
     }
     if (plan.operation === 'REGIONAL_EXPERIENCE') return this.regionalExperience(plan.state);
     if (plan.operation === 'TECHNICAL_EXPERIENCE') return this.technicalExperience(plan.technicalArea);
+    if (plan.operation === 'INVENTORY') return this.inventoryExperience(plan.services[0]?.query);
     return { answer: 'Reformule indicando o serviço, quantidade, unidade ou obra que deseja analisar.', sources: [] };
+  }
+
+  private async inventoryExperience(service?: string): Promise<{ answer: string; sources: CapabilitySource[] }> {
+    if (!service) return { answer: 'Informe o serviço ou material que deseja consultar no acervo.', sources: [] };
+    const rows = await this.dataSource.query<Array<{
+      atestadoId: string; filename: string; descricao: string; quantidade: string | number | null; unidade: string | null; obra: string | null;
+    }>>(
+      `SELECT s.atestado_id AS "atestadoId", a.original_filename AS filename, s.descricao,
+              s.quantidade, s.unidade, o.nome AS obra
+         FROM servicos_executados s
+         JOIN atestados a ON a.id = s.atestado_id
+         LEFT JOIN obras o ON o.id = s.obra_id
+        WHERE a.status = 'DONE' AND UPPER(s.descricao) LIKE UPPER($1)
+        ORDER BY a.original_filename, s.descricao
+        LIMIT 100`,
+      [`%${service}%`],
+    );
+    if (!rows.length) return { answer: `Não encontrei serviços com ${service} no acervo indexado.`, sources: [] };
+
+    const formatter = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
+    const answer = `Encontrei ${rows.length} registro(s) de ${service} em ${new Set(rows.map((row) => row.atestadoId)).size} atestado(s): ${rows.map((row) => {
+      const quantity = row.quantidade === null ? 'quantidade não informada' : `${formatter.format(Number(row.quantidade))} ${row.unidade ?? ''}`.trim();
+      return `${row.descricao} — ${quantity} (${row.filename})`;
+    }).join('; ')}.`;
+    return {
+      answer,
+      sources: rows.map((row) => ({ atestadoId: row.atestadoId, filename: row.filename, pagina: 1, trecho: `${row.descricao}${row.obra ? ` — ${row.obra}` : ''}` })),
+    };
+  }
+
+  private isInventoryQuery(query: string): boolean {
+    const lower = query.toLowerCase();
+    const asksForDocuments = /\b(?:quais?|listar|liste|mostre|exiba|onde|tem|possui|possuem|quantidade|quantidades)\b/.test(lower) && /\b(?:atestado|atestados|acervo)\b/.test(lower);
+    const asksForQuantity = /\b(?:qual(?:\s+é)?|quantos?|quanto|listar|mostre)\b/.test(lower) && /\b(?:quantidade|quantitativo|total)\b/.test(lower);
+    const isRequirement = /\b(?:edital|exige|exigência|requisito|mínimo|pelo menos|comprovar|atende|atender|preciso)\b/.test(lower);
+    return (asksForDocuments || asksForQuantity) && !isRequirement;
+  }
+
+  private isBareServiceQuery(query: string): boolean {
+    const value = query.trim();
+    if (!value || /[?!]/.test(value)) return false;
+    if (/\b(?:ol[aá]|oi|bom dia|boa tarde|boa noite|ajuda|obrigad[oa])\b/i.test(value)) return false;
+    const words = value.split(/\s+/);
+    return words.length <= 6 && words.some((word) => word.replace(/[^\p{L}\p{N}]/gu, '').length >= 4);
+  }
+
+  private extractInventoryService(query: string): string | undefined {
+    const match = query.match(/\b(?:tem|têm|possui|possuem|com|de)\s+(.+?)(?:\s+e\s+em\s+qual(?:\s+quantidade)?|\s+em\s+qual(?:\s+quantidade)?|[?!.]|$)/i)
+      ?? query.match(/\b(?:quantidade|quantitativo|total)\s+(?:de|do|da)\s+(.+?)(?:[?!.]|$)/i);
+    const candidate = match?.[1]
+      ?.replace(/\b(?:atestado|atestados|acervo)\b/gi, '')
+      .trim();
+    return candidate && candidate.length >= 2 ? candidate : undefined;
+  }
+
+  private parseQuantity(value: string): number {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.endsWith(' mil')) return Number(normalized.slice(0, -4).replace('.', '').replace(',', '.')) * 1000;
+    return Number(normalized.replace(/\.(?=\d{3}(?:\D|$))/g, '').replace(',', '.'));
+  }
+
+  private normalizeUnit(unit?: string): string | undefined {
+    if (!unit) return undefined;
+    if (/^m2$/i.test(unit)) return 'm²';
+    if (/^m3$/i.test(unit)) return 'm³';
+    if (/^metros?$/i.test(unit)) return 'm';
+    return unit;
   }
 
   private async aggregateQualificationTotal(service: ServiceRequirement, filters?: QualificationFilters): Promise<{ answer: string; sources: CapabilitySource[] }> {

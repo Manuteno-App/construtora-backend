@@ -55,6 +55,57 @@ describe('CapabilityChatService planning', () => {
     expect(normalized.services).toEqual(fallback.services);
   });
 
+  it('treats a request to list atestados and quantities as an acervo lookup, not an edital evaluation', async () => {
+    const plan = (service as any).heuristicPlan(
+      'Quais atestados têm CBUQ e em qual quantidade?',
+    ) as CapabilityPlan;
+    expect(plan).toMatchObject({
+      operation: 'INVENTORY',
+      services: [{ query: 'CBUQ' }],
+    });
+
+    const query = jest.fn().mockResolvedValue([{
+      atestadoId: 'A1', filename: 'CBUQ.pdf', descricao: 'CBUQ faixa C', quantidade: '1200', unidade: 't', obra: 'Obra 1',
+    }]);
+    (service as any).dataSource = { query };
+
+    const output = await (service as any).execute(plan);
+
+    expect(query).toHaveBeenCalledWith(expect.any(String), ['%CBUQ%']);
+    expect(output.answer).toContain('1.200 t');
+    expect(output.answer).not.toContain('não atende');
+    expect(output.sources).toEqual(expect.arrayContaining([{ atestadoId: 'A1', filename: 'CBUQ.pdf', pagina: 1, trecho: 'CBUQ faixa C — Obra 1' }]));
+  });
+
+  it('searches a bare service term in the acervo', () => {
+    const plan = (service as any).heuristicPlan('CBUQ') as CapabilityPlan;
+
+    expect(plan).toMatchObject({ operation: 'INVENTORY', services: [{ query: 'CBUQ' }] });
+  });
+
+  it('lists documents without attempting a quantity conversion', () => {
+    const plan = (service as any).heuristicPlan(
+      'Liste um atestado que fizemos 1 mil metros de Regularização de leito',
+    ) as CapabilityPlan;
+
+    expect(plan).toMatchObject({
+      operation: 'INVENTORY',
+      aggregateTotal: false,
+      services: [{ query: 'Regularização de leito' }],
+    });
+  });
+
+  it('keeps the requested service and parses quantities expressed in thousands', () => {
+    const plan = (service as any).heuristicPlan(
+      'O edital exige 2 mil metros de Regularização de subleito. Consigo atender?',
+    ) as CapabilityPlan;
+
+    expect(plan).toMatchObject({
+      operation: 'QUALIFICATION',
+      services: [{ query: 'Regularização de subleito', minQuantidade: 2000, unidade: 'm' }],
+    });
+  });
+
   it('totals converted quantities and returns every contributing atestado', async () => {
     const plan = (service as any).heuristicPlan(
       'O edital pede a imprimação em hectares, mas nossos atestados registram em m². Convertendo, quantos hectares de imprimação a empresa comprova no total?',
