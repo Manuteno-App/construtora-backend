@@ -372,9 +372,9 @@ describe('QualificationService extension filter', () => {
     });
 
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain('o.extensao_km = $2');
+    expect(sql).toContain('o.extensao_km = $3');
     expect(sql).not.toContain('o.extensao_km >=');
-    expect(params).toEqual(['rocada-manual', 42]);
+    expect(params).toEqual(['rocada-manual', 'Roçada Manual', 42]);
   });
 });
 
@@ -390,7 +390,7 @@ describe('QualificationService confirmed approximate evidence', () => {
     await service.findAtestadosComServico(['CBUQ'], undefined, [confirmedId]);
 
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain('s.id = ANY($2::uuid[])');
-    expect(params).toEqual(['cbuq', [confirmedId]]);
+    expect(sql).toContain('s.id = ANY($3::uuid[])');
+    expect(params).toEqual(['cbuq', 'CBUQ', [confirmedId]]);
   });
 });

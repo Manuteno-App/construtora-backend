@@ -1293,7 +1293,7 @@ export class QualificationService {
     confirmedServiceIds?: string[],
   ): Promise<MatchingServiceRow[]> {
     const params: unknown[] = [];
-    const matches: Array<{ exact: string }> = [];
+    const matches: Array<{ exact: string; textual: string }> = [];
     for (const descricao of descricoes) {
       const normalizedQuery = this.normalizeSearchText(descricao);
       const terms = this.getRelevantSearchTerms(normalizedQuery);
@@ -1303,11 +1303,13 @@ export class QualificationService {
       // It avoids recalculating the normalization expression for every row.
       params.push(normalizedQuery.replaceAll(' ', '-'));
       const exact = `s.normalized_service_key = $${params.length}`;
-      matches.push({ exact });
+      params.push(descricao.trim());
+      matches.push({ exact, textual: `UPPER(s.descricao) LIKE UPPER('%' || $${params.length} || '%')` });
     }
 
     if (matches.length === 0) return [];
     const exactConditions = matches.map((match) => match.exact).join(' OR ');
+    const textualConditions = matches.map((match) => match.textual).join(' OR ');
     const filterClauses = this.buildFilterClauses(filters, params);
     const confirmedIds = [...new Set(confirmedServiceIds ?? [])];
     if (confirmedIds.length) params.push(confirmedIds);
@@ -1319,7 +1321,7 @@ export class QualificationService {
     // textual matches (e.g. CBUQ -> Camada de CBUQ).
     const serviceCondition = confirmedCondition
       ? `((${exactConditions}) OR ${confirmedCondition})`
-      : `(${exactConditions})`;
+      : `((${exactConditions}) OR (${textualConditions}))`;
     const whereParts = [
       serviceCondition,
       ...filterClauses,
