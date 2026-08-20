@@ -22,6 +22,7 @@ import { DocumentsModule } from '../documents/documents.module';
 import { IngestionModule } from '../ingestion/ingestion.module';
 import { EXTRACTION_QUEUE, INDEXING_QUEUE } from '../infrastructure/queue/queue.module';
 import { MeasurementsModule } from '../measurements/measurements.module';
+import { QualificationModule } from '../qualification/qualification.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { MeasurementsModule } from '../measurements/measurements.module';
     DocumentsModule,
     IngestionModule,
     MeasurementsModule,
+    QualificationModule,
   ],
   providers: [
     ObraRepository,

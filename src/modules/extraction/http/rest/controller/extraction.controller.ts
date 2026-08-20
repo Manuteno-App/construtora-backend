@@ -4,6 +4,7 @@ import { IExtractionApi, EXTRACTION_API } from '../../../public-api/interface/ex
 import { MeasurementsService } from '../../../../measurements/core/service/measurements.service';
 import { ServicoExecutadoRepository } from '../../../persistence/repository/servico-executado.repository';
 import { UpsertServicoExecutadoDto } from '../dto/servico-executado.dto';
+import { ServiceSemanticIndexService } from '../../../../qualification/core/service/service-semantic-index.service';
 
 @ApiTags('extraction')
 @Controller('extraction')
@@ -31,6 +32,7 @@ export class AtestadoServicosController {
     @Inject(EXTRACTION_API) private readonly extractionApi: IExtractionApi,
     private readonly servicos: ServicoExecutadoRepository,
     private readonly measurements: MeasurementsService,
+    private readonly semanticIndex: ServiceSemanticIndexService,
   ) {}
 
   @Get(':id/servicos')
@@ -43,7 +45,9 @@ export class AtestadoServicosController {
   @Post(':id/servicos')
   @ApiOperation({ summary: 'Adiciona uma linha de serviço manual' })
   async createServico(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpsertServicoExecutadoDto) {
-    return this.servicos.createManual(id, await this.prepare(body));
+    const service = await this.servicos.createManual(id, await this.prepare(body));
+    await this.semanticIndex.indexService(service.id);
+    return service;
   }
 
   @Patch(':id/servicos/:servicoId')
@@ -55,6 +59,7 @@ export class AtestadoServicosController {
   ) {
     const updated = await this.servicos.updateManual(id, servicoId, await this.prepare(body));
     if (!updated) throw new NotFoundException('Serviço não encontrado neste atestado.');
+    await this.semanticIndex.indexService(updated.id);
     return updated;
   }
 

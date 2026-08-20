@@ -7,6 +7,7 @@ import { ContratoRepository } from '../../persistence/repository/contrato.reposi
 import { EmpresaRepository } from '../../persistence/repository/empresa.repository';
 import { ObraRepository } from '../../persistence/repository/obra.repository';
 import { ServicoExecutadoRepository } from '../../persistence/repository/servico-executado.repository';
+import { ServiceSemanticIndexService } from '../../../qualification/core/service/service-semantic-index.service';
 
 export interface ExtractedEntities {
   obra?: {
@@ -42,6 +43,7 @@ export class EntityOrchestrationService {
     private readonly contratoRepo: ContratoRepository,
     private readonly servicoRepo: ServicoExecutadoRepository,
     private readonly measurements: MeasurementsService,
+    private readonly semanticIndex: ServiceSemanticIndexService,
   ) {}
 
   private normalizeCategory(value?: string): string {
@@ -221,6 +223,7 @@ export class EntityOrchestrationService {
         quantity: row.quantidade,
         rawUnitSymbol: row.unitSymbolRaw,
       })));
+      await this.semanticIndex.indexAtestadoServices(atestadoId);
 
       this.logger.log('Services v2: extracted=' + tabelaServicos.length + ' persisted=' + resolvedRows.length + ' invalidQuantities=' + invalidQuantities + ' missingCategories=' + missingCategories + ' mergedDuplicates=' + mergedDuplicates);
     }

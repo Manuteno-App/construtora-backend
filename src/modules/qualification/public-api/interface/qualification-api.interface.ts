@@ -61,6 +61,10 @@ export interface ResolvedDescricao {
   descricao: string;
   score: number;
   unidadeSugerida?: string;
+  /** Exact names are safe to use immediately; other kinds need explicit confirmation. */
+  matchKind: 'EXACT' | 'TEXTUAL' | 'SEMANTIC';
+  similarity?: number;
+  serviceIds?: string[];
 }
 
 export interface ServiceRequirement {
@@ -70,6 +74,8 @@ export interface ServiceRequirement {
   unidade?: string;
   proofMode?: ProofMode;
   maxAtestados?: number;
+  /** Service rows explicitly accepted after a textual/semantic suggestion. */
+  confirmedServiceIds?: string[];
 }
 
 export type ProofMode = 'ONE' | 'MANY' | 'MAX';

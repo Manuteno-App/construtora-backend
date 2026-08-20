@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsIn, IsNumber, IsOptional, IsString, Min, ValidateIf, ValidateNested } from 'class-validator';
+import { IsArray, IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateIf, ValidateNested } from 'class-validator';
 
 export class QualificationFiltersDto {
   @IsOptional() @IsString() dataInicio?: string;
@@ -20,6 +20,8 @@ export class ServiceRequirementDto {
   @IsNumber()
   @Min(1)
   maxAtestados?: number;
+  @IsOptional() @IsArray() @IsUUID('4', { each: true })
+  confirmedServiceIds?: string[];
 }
 
 export class FindWithServiceDto {

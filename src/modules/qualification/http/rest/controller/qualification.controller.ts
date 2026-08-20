@@ -1,18 +1,32 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { QualificationService } from '../../../core/service/qualification.service';
+import { ServiceSemanticIndexService } from '../../../core/service/service-semantic-index.service';
 import { EvaluateBundleDto, FindBundleDto, FindWithMinQuantityDto, FindWithServiceDto } from '../dto/qualification.dto';
 
 @ApiTags('qualification')
 @Controller('qualification')
 export class QualificationController {
-  constructor(private readonly qualificationService: QualificationService) {}
+  constructor(
+    private readonly qualificationService: QualificationService,
+    private readonly semanticIndex: ServiceSemanticIndexService,
+  ) {}
 
   @Get('resolve')
   @ApiOperation({ summary: 'Resolve service descriptions via FTS + ILIKE (autocomplete)' })
   @ApiQuery({ name: 'q', required: true, description: 'Query string' })
   resolveDescricoes(@Query('q') query: string) {
     return this.qualificationService.resolveDescricoes(query ?? '');
+  }
+
+  @Post('reindex-services')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Indexa um lote de descrições de serviço para busca semântica' })
+  reindexServices(@Query('limit') limit?: string) {
+    const parsed = Number(limit);
+    return this.semanticIndex.backfill(
+      Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 500) : 500,
+    ).then((indexed) => ({ indexed }));
   }
 
   @Post('find-with-service')

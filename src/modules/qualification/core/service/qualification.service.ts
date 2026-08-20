@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { MeasurementsService } from '../../../measurements/core/service/measurements.service';
+import { ServiceSemanticIndexService } from './service-semantic-index.service';
 import {
   BundleCoverageResult,
   BundleEvaluationRequest,
@@ -80,6 +81,7 @@ export class QualificationService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly measurements: MeasurementsService,
+    private readonly semanticIndex?: ServiceSemanticIndexService,
   ) {}
 
   private normalizeSearchText(value: string): string {
@@ -128,60 +130,98 @@ export class QualificationService {
   }
 
   async resolveDescricoes(query: string): Promise<ResolvedDescricao[]> {
+    const normalizedQuery = this.normalizeSearchText(query);
+    if (!normalizedQuery) return [];
     const ilikePat = `%${query.trim()}%`;
     try {
       const rows = await this.dataSource.query<
-        { descricao: string; score: string; unidadeSugerida: string | null }[]
+        { descricao: string; score: string; unidadeSugerida: string | null; serviceIds: string[]; matchKind: 'EXACT' | 'TEXTUAL' }[]
       >(
-        `SELECT DISTINCT s.descricao,
+        `SELECT s.descricao,
            COALESCE(ts_rank(s.descricao_tsv, plainto_tsquery('portuguese', $1)), 0) AS score,
            (SELECT s2.unidade
               FROM servicos_executados s2
              WHERE s2.descricao = s.descricao AND s2.unidade IS NOT NULL
              GROUP BY s2.unidade
              ORDER BY COUNT(*) DESC, s2.unidade
-             LIMIT 1) AS "unidadeSugerida"
+             LIMIT 1) AS "unidadeSugerida",
+           array_agg(s.id) AS "serviceIds",
+           CASE WHEN s.normalized_service_key = $3 THEN 'EXACT' ELSE 'TEXTUAL' END AS "matchKind"
          FROM servicos_executados s
          WHERE s.descricao_tsv @@ plainto_tsquery('portuguese', $1)
             OR UPPER(s.descricao) LIKE UPPER($2)
-         ORDER BY score DESC
+         GROUP BY s.descricao, s.normalized_service_key, s.descricao_tsv
+         ORDER BY CASE WHEN s.normalized_service_key = $3 THEN 0 ELSE 1 END, score DESC
          LIMIT 30`,
-        [query.trim(), ilikePat],
+        [query.trim(), ilikePat, normalizedQuery.replaceAll(' ', '-')],
       );
-      return rows.map((r) => ({
+      const lexical = rows.map((r) => ({
         descricao: r.descricao,
         score: parseFloat(r.score),
         unidadeSugerida: r.unidadeSugerida ?? undefined,
+        matchKind: r.matchKind,
+        serviceIds: r.serviceIds,
       }));
+      return this.mergeSemanticSuggestions(query, lexical);
     } catch {
       this.logger.warn(
         'FTS column unavailable, falling back to ILIKE-only for resolveDescricoes',
       );
       const rows = await this.dataSource.query<
-        { descricao: string; unidadeSugerida: string | null }[]
+        { descricao: string; unidadeSugerida: string | null; serviceIds: string[]; matchKind: 'EXACT' | 'TEXTUAL' }[]
       >(
         `SELECT DISTINCT s.descricao,
            (SELECT s2.unidade FROM servicos_executados s2
              WHERE s2.descricao = s.descricao AND s2.unidade IS NOT NULL
-             GROUP BY s2.unidade ORDER BY COUNT(*) DESC, s2.unidade LIMIT 1) AS "unidadeSugerida"
-         FROM servicos_executados s WHERE UPPER(s.descricao) LIKE UPPER($1) LIMIT 30`,
-        [ilikePat],
+             GROUP BY s2.unidade ORDER BY COUNT(*) DESC, s2.unidade LIMIT 1) AS "unidadeSugerida",
+           array_agg(s.id) AS "serviceIds",
+           CASE WHEN s.normalized_service_key = $2 THEN 'EXACT' ELSE 'TEXTUAL' END AS "matchKind"
+         FROM servicos_executados s WHERE UPPER(s.descricao) LIKE UPPER($1)
+         GROUP BY s.descricao, s.normalized_service_key
+         ORDER BY CASE WHEN s.normalized_service_key = $2 THEN 0 ELSE 1 END
+         LIMIT 30`,
+        [ilikePat, normalizedQuery.replaceAll(' ', '-')],
       );
-      return rows.map((r) => ({
+      return this.mergeSemanticSuggestions(query, rows.map((r) => ({
         descricao: r.descricao,
         score: 0,
         unidadeSugerida: r.unidadeSugerida ?? undefined,
-      }));
+        matchKind: r.matchKind,
+        serviceIds: r.serviceIds,
+      })));
     }
+  }
+
+  private async mergeSemanticSuggestions(
+    query: string,
+    lexical: ResolvedDescricao[],
+  ): Promise<ResolvedDescricao[]> {
+    if (!this.semanticIndex) return lexical;
+    const knownIds = new Set(lexical.flatMap((item) => item.serviceIds ?? []));
+    const semantic = await this.semanticIndex.search(query);
+    return [
+      ...lexical,
+      ...semantic
+        .filter((item) => !knownIds.has(item.serviceId))
+        .map((item) => ({
+          descricao: item.descricao,
+          score: item.similarity,
+          similarity: item.similarity,
+          unidadeSugerida: item.unidadeSugerida,
+          matchKind: 'SEMANTIC' as const,
+          serviceIds: [item.serviceId],
+        })),
+    ];
   }
 
   async findAtestadosComServico(
     descricoes: string[],
     filters?: QualificationFilters,
+    confirmedServiceIds?: string[],
   ): Promise<QualificationSource[]> {
     if (descricoes.length === 0) return [];
 
-    const rows = await this.fetchMatchingServiceRows(descricoes, filters);
+    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds);
     return (await this.aggregateRowsByAtestado(rows)).map((item) => ({
       ...item.source,
       servicos: item.servicos,
@@ -193,10 +233,11 @@ export class QualificationService {
     minQty: number,
     unidade?: string,
     filters?: QualificationFilters,
+    confirmedServiceIds?: string[],
   ): Promise<QualificationSource[]> {
     if (descricoes.length === 0) return [];
 
-    const rows = await this.fetchMatchingServiceRows(descricoes, filters);
+    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds);
     const aggregated = await this.aggregateRowsByAtestado(rows, unidade);
     return aggregated
       .filter((item) => item.totalQuantidade >= minQty)
@@ -212,6 +253,7 @@ export class QualificationService {
     minQty: number,
     unidade?: string,
     filters?: QualificationFilters,
+    confirmedServiceIds?: string[],
   ): Promise<CumulativeResult> {
     if (descricoes.length === 0) {
       return {
@@ -222,7 +264,7 @@ export class QualificationService {
       };
     }
 
-    const rows = await this.fetchMatchingServiceRows(descricoes, filters);
+    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds);
     const aggregated = await this.aggregateRowsByAtestado(rows, unidade);
     const totalQuantidade = aggregated.reduce(
       (sum, item) => sum + item.totalQuantidade,
@@ -254,6 +296,7 @@ export class QualificationService {
           query: svc.query,
           minQuantidade: svc.minQuantidade,
           unidade: svc.unidade,
+          confirmedServiceIds: svc.confirmedServiceIds,
           resolvedDescricoes: [svc.query],
         };
       }),
@@ -273,9 +316,10 @@ export class QualificationService {
                 svc.minQuantidade,
                 svc.unidade,
                 filters,
+                svc.confirmedServiceIds,
               )
             ).atestados
-          : await this.findAtestadosComServico(svc.resolvedDescricoes, filters);
+          : await this.findAtestadosComServico(svc.resolvedDescricoes, filters, svc.confirmedServiceIds);
       perServiceAtestados.push({ query: svc.query, atestados });
     }
 
@@ -373,14 +417,13 @@ export class QualificationService {
 
     const resolvedServices = await Promise.all(
       services.map(async (svc) => {
-        const resolved = await this.resolveDescricoes(svc.query);
-        const topDescricoes = resolved.slice(0, 5).map((r) => r.descricao);
         return {
           query: svc.query,
           minQuantidade: svc.minQuantidade,
           unidade: svc.unidade,
-          resolvedDescricoes:
-            topDescricoes.length > 0 ? topDescricoes : [svc.query],
+          confirmedServiceIds: svc.confirmedServiceIds,
+          // Related descriptions are never expanded implicitly in qualification.
+          resolvedDescricoes: [svc.query],
         };
       }),
     );
@@ -393,6 +436,7 @@ export class QualificationService {
           svc.minQuantidade,
           svc.unidade,
           filters,
+          svc.confirmedServiceIds,
         );
         results.push({
           serviceQuery: svc.query,
@@ -405,6 +449,7 @@ export class QualificationService {
         const atestados = await this.findAtestadosComServico(
           svc.resolvedDescricoes,
           filters,
+          svc.confirmedServiceIds,
         );
         results.push({
           serviceQuery: svc.query,
@@ -677,9 +722,10 @@ export class QualificationService {
                   service.minQuantidade,
                   service.unidade,
                   filters,
+                  service.confirmedServiceIds,
                 )
               ).atestados
-            : await this.findAtestadosComServico(resolvedDescricoes, filters);
+            : await this.findAtestadosComServico(resolvedDescricoes, filters, service.confirmedServiceIds);
         const qualifyingAtestados =
           service.minQuantidade !== undefined
             ? matchingAtestados.filter(
@@ -828,11 +874,12 @@ export class QualificationService {
               await this.findCumulativoAtestados(
                 resolvedDescricoes,
                 service.minQuantidade,
-                service.unidade,
-                filters,
+                  service.unidade,
+                  filters,
+                  service.confirmedServiceIds,
               )
             ).atestados
-          : await this.findAtestadosComServico(resolvedDescricoes, filters);
+          : await this.findAtestadosComServico(resolvedDescricoes, filters, service.confirmedServiceIds);
       const qualifyingAtestados =
         service.minQuantidade !== undefined
           ? await this.findAtestadosComQuantidadeMinima(
@@ -840,6 +887,7 @@ export class QualificationService {
               service.minQuantidade,
               service.unidade,
               filters,
+              service.confirmedServiceIds,
             )
           : matchingAtestados;
       const selectedAtestados = qualifyingAtestados.slice(0, 1);
@@ -900,6 +948,7 @@ export class QualificationService {
       service,
       resolvedDescricoes,
       filters,
+      service.confirmedServiceIds,
     );
   }
 
@@ -914,6 +963,7 @@ export class QualificationService {
         service.minQuantidade,
         service.unidade,
         filters,
+        service.confirmedServiceIds,
       );
       const selectedAtestados = this.pickMinimumSourcesForQuantity(
         cumul.atestados,
@@ -956,6 +1006,7 @@ export class QualificationService {
     const qualifyingAtestados = await this.findAtestadosComServico(
       resolvedDescricoes,
       filters,
+      service.confirmedServiceIds,
     );
     const selectedAtestados = qualifyingAtestados.slice(0, 1);
     const covered = qualifyingAtestados.length > 0;
@@ -991,6 +1042,7 @@ export class QualificationService {
         service.minQuantidade,
         service.unidade,
         filters,
+        service.confirmedServiceIds,
       );
       const selectedAtestados = this.pickMinimumSourcesForQuantity(
         cumul.atestados,
@@ -1040,6 +1092,7 @@ export class QualificationService {
     const qualifyingAtestados = await this.findAtestadosComServico(
       resolvedDescricoes,
       filters,
+      service.confirmedServiceIds,
     );
     const selectedAtestados = qualifyingAtestados.slice(0, 1);
     const covered = qualifyingAtestados.length > 0;
@@ -1238,9 +1291,10 @@ export class QualificationService {
   private async fetchMatchingServiceRows(
     descricoes: string[],
     filters?: QualificationFilters,
+    confirmedServiceIds?: string[],
   ): Promise<MatchingServiceRow[]> {
     const params: unknown[] = [];
-    const matches: Array<{ exact: string; textual: string }> = [];
+    const matches: Array<{ exact: string }> = [];
     for (const descricao of descricoes) {
       const normalizedQuery = this.normalizeSearchText(descricao);
       const terms = this.getRelevantSearchTerms(normalizedQuery);
@@ -1250,21 +1304,25 @@ export class QualificationService {
       // It avoids recalculating the normalization expression for every row.
       params.push(normalizedQuery.replaceAll(' ', '-'));
       const exact = `s.normalized_service_key = $${params.length}`;
-      params.push(descricao.trim());
-      matches.push({
-        exact,
-        textual: `s.descricao_tsv @@ plainto_tsquery('portuguese', $${params.length})`,
-      });
+      matches.push({ exact });
     }
 
     if (matches.length === 0) return [];
     const exactConditions = matches.map((match) => match.exact).join(' OR ');
-    const textualConditions = matches
-      .map((match) => match.textual)
-      .join(' OR ');
     const filterClauses = this.buildFilterClauses(filters, params);
+    const confirmedIds = [...new Set(confirmedServiceIds ?? [])];
+    if (confirmedIds.length) params.push(confirmedIds);
+    const confirmedCondition = confirmedIds.length
+      ? `s.id = ANY($${params.length}::uuid[])`
+      : undefined;
+    // A confirmed approximate result is intentionally narrow: it may add the
+    // selected row, but cannot silently broaden the criterion to all partial
+    // textual matches (e.g. CBUQ -> Camada de CBUQ).
+    const serviceCondition = confirmedCondition
+      ? `((${exactConditions}) OR ${confirmedCondition})`
+      : `(${exactConditions})`;
     const whereParts = [
-      `((${exactConditions}) OR (${textualConditions}))`,
+      serviceCondition,
       ...filterClauses,
     ];
 
@@ -1303,10 +1361,12 @@ export class QualificationService {
            ORDER BY ch.page_number NULLS LAST LIMIT 1) AS "pageNumber",
          CASE
            WHEN (${exactConditions}) THEN 'EXATA'
+           WHEN ${confirmedCondition ?? 'false'} THEN 'TEXTUAL_FORTE'
            ELSE 'POR_TERMOS'
          END AS "matchType",
          CASE
            WHEN (${exactConditions}) THEN 3
+           WHEN ${confirmedCondition ?? 'false'} THEN 2
            ELSE 2
          END AS "matchRank"
        FROM servicos_executados s

@@ -95,7 +95,7 @@ describe('QualificationService.evaluateBundlePolicy', () => {
     jest
       .spyOn(service, 'resolveDescricoes')
       .mockImplementation(async (query: string) => [
-        { descricao: query, score: 1 },
+        { descricao: query, score: 1, matchKind: 'EXACT' },
       ]);
     jest
       .spyOn(service, 'findAtestadosComServico')
@@ -147,7 +147,7 @@ describe('QualificationService.evaluateBundlePolicy', () => {
   it('fails a MAX line when it needs more atestados than allowed', async () => {
     jest
       .spyOn(service, 'resolveDescricoes')
-      .mockResolvedValue([{ descricao: 'Servico MAX', score: 1 }]);
+      .mockResolvedValue([{ descricao: 'Servico MAX', score: 1, matchKind: 'EXACT' }]);
     jest.spyOn(service, 'findCumulativoAtestados').mockResolvedValue({
       atestados: [
         makeSource('A1', 4),
@@ -372,8 +372,25 @@ describe('QualificationService extension filter', () => {
     });
 
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain('o.extensao_km = $3');
+    expect(sql).toContain('o.extensao_km = $2');
     expect(sql).not.toContain('o.extensao_km >=');
-    expect(params).toEqual(['rocada-manual', 'Roçada Manual', 42]);
+    expect(params).toEqual(['rocada-manual', 42]);
+  });
+});
+
+describe('QualificationService confirmed approximate evidence', () => {
+  it('uses only the explicitly confirmed row instead of broadening a partial CBUQ match', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    const service = new QualificationService(
+      { query } as unknown as DataSource,
+      { convertQuantity: jest.fn(), normalizeServiceKey: jest.fn() } as any,
+    );
+    const confirmedId = '00000000-0000-4000-8000-000000000001';
+
+    await service.findAtestadosComServico(['CBUQ'], undefined, [confirmedId]);
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('s.id = ANY($2::uuid[])');
+    expect(params).toEqual(['cbuq', [confirmedId]]);
   });
 });

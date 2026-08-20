@@ -24,6 +24,8 @@ export const configurationSchema = Joi.object({
   RAG_TOP_K: Joi.number().default(20),
   RAG_SIMILARITY_THRESHOLD: Joi.number().default(0.35),
   QUALIFICATION_CONFIDENCE_THRESHOLD: Joi.number().default(0.05),
+  QUALIFICATION_SEMANTIC_SIMILARITY_THRESHOLD: Joi.number().min(0).max(1).default(0.78),
+  QUALIFICATION_SEMANTIC_TOP_K: Joi.number().integer().min(1).max(30).default(8),
 
   JWT_ACCESS_SECRET: Joi.string().required(),
   JWT_REFRESH_SECRET: Joi.string().required(),
@@ -66,6 +68,8 @@ export const configuration = () => ({
 
   qualification: {
     confidenceThreshold: parseFloat(process.env.QUALIFICATION_CONFIDENCE_THRESHOLD ?? '0.05'),
+    semanticSimilarityThreshold: parseFloat(process.env.QUALIFICATION_SEMANTIC_SIMILARITY_THRESHOLD ?? '0.78'),
+    semanticTopK: parseInt(process.env.QUALIFICATION_SEMANTIC_TOP_K ?? '8', 10),
   },
 
   jwt: {
