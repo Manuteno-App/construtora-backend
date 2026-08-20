@@ -948,7 +948,6 @@ export class QualificationService {
       service,
       resolvedDescricoes,
       filters,
-      service.confirmedServiceIds,
     );
   }
 
