@@ -76,6 +76,7 @@ export interface ServiceRequirement {
   maxAtestados?: number;
   /** Service rows explicitly accepted after a textual/semantic suggestion. */
   confirmedServiceIds?: string[];
+  matchMode?: 'EXACT' | 'CONTAINS';
 }
 
 export type ProofMode = 'ONE' | 'MANY' | 'MAX';

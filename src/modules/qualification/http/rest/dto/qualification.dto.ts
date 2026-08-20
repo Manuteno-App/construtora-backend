@@ -22,6 +22,8 @@ export class ServiceRequirementDto {
   maxAtestados?: number;
   @IsOptional() @IsArray() @IsUUID('4', { each: true })
   confirmedServiceIds?: string[];
+  @IsOptional() @IsIn(['EXACT', 'CONTAINS'])
+  matchMode?: 'EXACT' | 'CONTAINS';
 }
 
 export class FindWithServiceDto {
