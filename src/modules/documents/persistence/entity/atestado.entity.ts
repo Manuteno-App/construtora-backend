@@ -10,7 +10,7 @@ import { ServicoExecutado } from '../../../extraction/persistence/entity/servico
 import { Chunk } from '../../../ingestion/persistence/entity/chunk.entity';
 
 export enum AtestadoCategoria {
-  ST = 'ST',
+  EST = 'EST',
   CIV = 'CIV',
   SAN = 'SAN',
   INS = 'INS',

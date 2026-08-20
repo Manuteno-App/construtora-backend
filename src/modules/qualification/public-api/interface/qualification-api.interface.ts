@@ -4,7 +4,7 @@ export interface QualificationFilters {
   localidade?: string;
   minValor?: number;
   extensaoKm?: number;
-  categoriaAtestado?: 'ST' | 'CIV' | 'SAN' | 'INS';
+  categoriaAtestado?: 'EST' | 'CIV' | 'SAN' | 'INS';
 }
 
 export interface ServicoBuscado {
@@ -47,7 +47,7 @@ export interface QualificationSource {
   kmInicial?: number;
   kmFinal?: number;
   extensaoCalculadaKm?: number;
-  categoriaAtestado?: 'ST' | 'CIV' | 'SAN' | 'INS';
+  categoriaAtestado?: 'EST' | 'CIV' | 'SAN' | 'INS';
   servicos?: ServicoBuscado[];
   selectionRole?:
     | 'MEETS_ALONE'

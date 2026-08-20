@@ -114,7 +114,7 @@ export class CapabilityChatService {
                   required: ['dataInicio', 'dataFim', 'localidade', 'minValor', 'extensaoKm', 'categoriaAtestado'],
                   properties: {
                     dataInicio: { type: ['string', 'null'] }, dataFim: { type: ['string', 'null'] }, localidade: { type: ['string', 'null'] },
-                    minValor: { type: ['number', 'null'] }, extensaoKm: { type: ['number', 'null'] }, categoriaAtestado: { type: ['string', 'null'], enum: ['ST', 'CIV', 'SAN', 'INS', null] },
+                    minValor: { type: ['number', 'null'] }, extensaoKm: { type: ['number', 'null'] }, categoriaAtestado: { type: ['string', 'null'], enum: ['EST', 'CIV', 'SAN', 'INS', null] },
                   },
                 },
                 state: { type: ['string', 'null'] },

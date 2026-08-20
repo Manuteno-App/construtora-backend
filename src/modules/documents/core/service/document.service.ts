@@ -7,8 +7,9 @@ import { Chunk } from '../../../ingestion/persistence/entity/chunk.entity';
 import { Atestado, AtestadoCategoria, AtestadoStatus } from '../../persistence/entity/atestado.entity';
 import { AtestadoRepository } from '../../persistence/repository/atestado.repository';
 
-const categoryFromFilename = (filename: string): AtestadoCategoria | undefined => {
-  const code = filename.trim().match(/^(ST|CIV|SAN|INS)\s*-/i)?.[1]?.toUpperCase();
+export const categoryFromFilename = (filename: string): AtestadoCategoria | undefined => {
+  const code = filename.trim().match(/^(ST|EST|CIV|SAN|INS)(?:\s*-|\s+|_|\.|$)/i)?.[1]?.toUpperCase();
+  if (code === 'ST') return AtestadoCategoria.EST;
   return code && code in AtestadoCategoria ? code as AtestadoCategoria : undefined;
 };
 

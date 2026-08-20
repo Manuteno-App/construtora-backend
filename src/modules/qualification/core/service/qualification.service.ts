@@ -59,7 +59,7 @@ interface MatchingServiceRow {
   kmInicial: string | number | null;
   kmFinal: string | number | null;
   extensaoCalculadaKm: string | number | null;
-  categoriaAtestado: 'ST' | 'CIV' | 'SAN' | 'INS' | null;
+  categoriaAtestado: 'EST' | 'CIV' | 'SAN' | 'INS' | null;
   serviceId: string;
   descricao: string;
   quantidade: string | null;
@@ -424,14 +424,17 @@ export class QualificationService {
     const { bundleMode, maxAtestados, services, filters } = request;
     let result: BundleEvaluationResult;
     if (services.length === 0) {
+      const atestados = await this.fetchAtestadosByFilters(filters);
       result = {
         bundleModeApplied: bundleMode,
         maxAtestados,
-        selectedAtestados: [],
-        usedAtestadosCount: 0,
+        selectedAtestados: atestados,
+        candidateAtestados: atestados,
+        usedAtestadosCount: atestados.length,
         coverageByService: [],
-        fullyQualified: false,
+        fullyQualified: atestados.length > 0,
         exceededMaxAtestados: false,
+        matchingAtestadosCount: atestados.length,
       };
     } else if (bundleMode === 'ONE') {
       result = await this.evaluateGlobalOneAtestado(services, filters);
@@ -544,7 +547,8 @@ export class QualificationService {
       coverageByService,
       bestCandidateCoverageCount,
       totalAtestadosBase,
-      matchingAtestadosCount: matchingIds.size,
+      matchingAtestadosCount:
+        matchingIds.size || result.matchingAtestadosCount || 0,
       elapsedMs: Date.now() - startedAt,
     };
   }
@@ -1161,6 +1165,74 @@ export class QualificationService {
       });
     }
     return map;
+  }
+
+  private async fetchAtestadosByFilters(
+    filters?: QualificationFilters,
+  ): Promise<QualificationSource[]> {
+    const params: unknown[] = [];
+    const filterClauses = this.buildFilterClauses(filters, params);
+    const rows = await this.dataSource.query<MatchingServiceRow[]>(
+      `SELECT
+         a.id AS "atestadoId",
+         a.original_filename AS filename,
+         a.last_reprocessed_at,
+         MAX(o.nome) AS "obraNome",
+         MAX(o.local) AS local,
+         MIN(o.data_inicio::text) AS "dataInicio",
+         MAX(o.data_fim::text) AS "dataFim",
+         MAX(o.valor) AS valor,
+         MAX(o.numero_atestado) AS "numeroAtestado",
+         MAX(o.extensao_km) AS "extensaoKm",
+         MAX(o.extensao_declarada_km) AS "extensaoDeclaradaKm",
+         MAX(o.km_inicial) AS "kmInicial",
+         MAX(o.km_final) AS "kmFinal",
+         MAX(o.extensao_calculada_km) AS "extensaoCalculadaKm",
+         a.categoria AS "categoriaAtestado",
+         (SELECT c.numero FROM contratos c
+          INNER JOIN obras o2 ON o2.id = c.obra_id
+          WHERE o2.atestado_id = a.id LIMIT 1) AS "contratoNumero"
+       FROM atestados a
+       LEFT JOIN obras o ON o.atestado_id = a.id
+       WHERE a.status = 'DONE'
+         ${filterClauses.length ? `AND ${filterClauses.join(' AND ')}` : ''}
+       GROUP BY a.id, a.original_filename, a.last_reprocessed_at, a.categoria
+       ORDER BY a.original_filename`,
+      params,
+    );
+
+    return rows.map((row) => ({
+      atestadoId: row.atestadoId,
+      filename: row.filename,
+      lastReprocessedAt: row.last_reprocessed_at
+        ? new Date(row.last_reprocessed_at)
+        : undefined,
+      obraNome: row.obraNome ?? '',
+      local: row.local ?? undefined,
+      dataInicio: row.dataInicio ?? undefined,
+      dataFim: row.dataFim ?? undefined,
+      valor: row.valor == null ? undefined : Number(row.valor),
+      contratoNumero: row.contratoNumero ?? undefined,
+      numeroAtestado: row.numeroAtestado ?? undefined,
+      numeroPrincipal: row.numeroAtestado ?? row.contratoNumero ?? undefined,
+      numeroPrincipalOrigem: row.numeroAtestado
+        ? 'ATESTADO'
+        : row.contratoNumero
+          ? 'CONTRATO'
+          : undefined,
+      extensaoKm: row.extensaoKm == null ? undefined : Number(row.extensaoKm),
+      extensaoDeclaradaKm:
+        row.extensaoDeclaradaKm == null
+          ? undefined
+          : Number(row.extensaoDeclaradaKm),
+      kmInicial: row.kmInicial == null ? undefined : Number(row.kmInicial),
+      kmFinal: row.kmFinal == null ? undefined : Number(row.kmFinal),
+      extensaoCalculadaKm:
+        row.extensaoCalculadaKm == null
+          ? undefined
+          : Number(row.extensaoCalculadaKm),
+      categoriaAtestado: row.categoriaAtestado ?? undefined,
+    }));
   }
 
   private async fetchMatchingServiceRows(

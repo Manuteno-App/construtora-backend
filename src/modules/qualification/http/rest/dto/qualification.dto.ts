@@ -7,7 +7,7 @@ export class QualificationFiltersDto {
   @IsOptional() @IsString() localidade?: string;
   @IsOptional() @IsNumber() @Min(0) minValor?: number;
   @IsOptional() @IsNumber() @Min(0) extensaoKm?: number;
-  @IsOptional() @IsIn(['ST', 'CIV', 'SAN', 'INS']) categoriaAtestado?: 'ST' | 'CIV' | 'SAN' | 'INS';
+  @IsOptional() @IsIn(['EST', 'CIV', 'SAN', 'INS']) categoriaAtestado?: 'EST' | 'CIV' | 'SAN' | 'INS';
 }
 
 export class ServiceRequirementDto {

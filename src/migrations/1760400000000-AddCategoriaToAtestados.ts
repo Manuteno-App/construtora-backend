@@ -10,10 +10,10 @@ export class AddCategoriaToAtestados1760400000000 implements MigrationInterface 
     await queryRunner.query(`
       UPDATE "atestados"
       SET "categoria" = CASE
-        WHEN "original_filename" ~* '^\\s*ST\\s*-' THEN 'ST'
-        WHEN "original_filename" ~* '^\\s*CIV\\s*-' THEN 'CIV'
-        WHEN "original_filename" ~* '^\\s*SAN\\s*-' THEN 'SAN'
-        WHEN "original_filename" ~* '^\\s*INS\\s*-' THEN 'INS'
+        WHEN "original_filename" ~* '^\\s*(ST|EST)(\\s*-|\\s+|_|\\.|$)' THEN 'EST'
+        WHEN "original_filename" ~* '^\\s*CIV(\\s*-|\\s+|_|\\.|$)' THEN 'CIV'
+        WHEN "original_filename" ~* '^\\s*SAN(\\s*-|\\s+|_|\\.|$)' THEN 'SAN'
+        WHEN "original_filename" ~* '^\\s*INS(\\s*-|\\s+|_|\\.|$)' THEN 'INS'
         ELSE NULL
       END
       WHERE "categoria" IS NULL
