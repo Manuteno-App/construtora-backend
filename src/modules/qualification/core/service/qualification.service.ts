@@ -218,10 +218,11 @@ export class QualificationService {
     descricoes: string[],
     filters?: QualificationFilters,
     confirmedServiceIds?: string[],
+    matchMode: 'EXACT' | 'CONTAINS' = 'CONTAINS',
   ): Promise<QualificationSource[]> {
     if (descricoes.length === 0) return [];
 
-    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds);
+    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds, matchMode);
     return (await this.aggregateRowsByAtestado(rows)).map((item) => ({
       ...item.source,
       servicos: item.servicos,
@@ -234,10 +235,11 @@ export class QualificationService {
     unidade?: string,
     filters?: QualificationFilters,
     confirmedServiceIds?: string[],
+    matchMode: 'EXACT' | 'CONTAINS' = 'CONTAINS',
   ): Promise<QualificationSource[]> {
     if (descricoes.length === 0) return [];
 
-    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds);
+    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds, matchMode);
     const aggregated = await this.aggregateRowsByAtestado(rows, unidade);
     return aggregated
       .filter((item) => item.totalQuantidade >= minQty)
@@ -254,6 +256,7 @@ export class QualificationService {
     unidade?: string,
     filters?: QualificationFilters,
     confirmedServiceIds?: string[],
+    matchMode: 'EXACT' | 'CONTAINS' = 'CONTAINS',
   ): Promise<CumulativeResult> {
     if (descricoes.length === 0) {
       return {
@@ -264,7 +267,7 @@ export class QualificationService {
       };
     }
 
-    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds);
+    const rows = await this.fetchMatchingServiceRows(descricoes, filters, confirmedServiceIds, matchMode);
     const aggregated = await this.aggregateRowsByAtestado(rows, unidade);
     const totalQuantidade = aggregated.reduce(
       (sum, item) => sum + item.totalQuantidade,
@@ -723,6 +726,7 @@ export class QualificationService {
                   service.unidade,
                   filters,
                   service.confirmedServiceIds,
+                  service.matchMode,
                 )
               ).atestados
             : await this.findAtestadosComServico(resolvedDescricoes, filters, service.confirmedServiceIds);
@@ -877,9 +881,10 @@ export class QualificationService {
                   service.unidade,
                   filters,
                   service.confirmedServiceIds,
+                  service.matchMode,
               )
             ).atestados
-          : await this.findAtestadosComServico(resolvedDescricoes, filters, service.confirmedServiceIds);
+          : await this.findAtestadosComServico(resolvedDescricoes, filters, service.confirmedServiceIds, service.matchMode);
       const qualifyingAtestados =
         service.minQuantidade !== undefined
           ? await this.findAtestadosComQuantidadeMinima(
@@ -888,6 +893,7 @@ export class QualificationService {
               service.unidade,
               filters,
               service.confirmedServiceIds,
+              service.matchMode,
             )
           : matchingAtestados;
       const selectedAtestados = qualifyingAtestados.slice(0, 1);
@@ -963,6 +969,7 @@ export class QualificationService {
         service.unidade,
         filters,
         service.confirmedServiceIds,
+        service.matchMode,
       );
       const selectedAtestados = this.pickMinimumSourcesForQuantity(
         cumul.atestados,
@@ -1006,6 +1013,7 @@ export class QualificationService {
       resolvedDescricoes,
       filters,
       service.confirmedServiceIds,
+      service.matchMode,
     );
     const selectedAtestados = qualifyingAtestados.slice(0, 1);
     const covered = qualifyingAtestados.length > 0;
@@ -1042,6 +1050,7 @@ export class QualificationService {
         service.unidade,
         filters,
         service.confirmedServiceIds,
+        service.matchMode,
       );
       const selectedAtestados = this.pickMinimumSourcesForQuantity(
         cumul.atestados,
@@ -1092,6 +1101,7 @@ export class QualificationService {
       resolvedDescricoes,
       filters,
       service.confirmedServiceIds,
+      service.matchMode,
     );
     const selectedAtestados = qualifyingAtestados.slice(0, 1);
     const covered = qualifyingAtestados.length > 0;
@@ -1291,6 +1301,7 @@ export class QualificationService {
     descricoes: string[],
     filters?: QualificationFilters,
     confirmedServiceIds?: string[],
+    matchMode: 'EXACT' | 'CONTAINS' = 'CONTAINS',
   ): Promise<MatchingServiceRow[]> {
     const params: unknown[] = [];
     const matches: Array<{ exact: string; textual: string }> = [];
@@ -1321,7 +1332,9 @@ export class QualificationService {
     // textual matches (e.g. CBUQ -> Camada de CBUQ).
     const serviceCondition = confirmedCondition
       ? `((${exactConditions}) OR ${confirmedCondition})`
-      : `((${exactConditions}) OR (${textualConditions}))`;
+      : matchMode === 'EXACT'
+        ? `(${exactConditions})`
+        : `((${exactConditions}) OR (${textualConditions}))`;
     const whereParts = [
       serviceCondition,
       ...filterClauses,
