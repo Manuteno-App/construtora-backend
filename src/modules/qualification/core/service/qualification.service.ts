@@ -1304,7 +1304,7 @@ export class QualificationService {
     matchMode: 'EXACT' | 'CONTAINS' = 'CONTAINS',
   ): Promise<MatchingServiceRow[]> {
     const params: unknown[] = [];
-    const matches: Array<{ exact: string; textual: string }> = [];
+    const matches: Array<{ exact: string; textual?: string }> = [];
     for (const descricao of descricoes) {
       const normalizedQuery = this.normalizeSearchText(descricao);
       const terms = this.getRelevantSearchTerms(normalizedQuery);
@@ -1314,13 +1314,22 @@ export class QualificationService {
       // It avoids recalculating the normalization expression for every row.
       params.push(normalizedQuery.replaceAll(' ', '-'));
       const exact = `s.normalized_service_key = $${params.length}`;
-      params.push(descricao.trim());
-      matches.push({ exact, textual: `UPPER(s.descricao) LIKE UPPER('%' || $${params.length} || '%')` });
+      if (matchMode === 'CONTAINS' && !(confirmedServiceIds?.length)) {
+        params.push(descricao.trim());
+        matches.push({
+          exact,
+          textual: `UPPER(s.descricao) LIKE UPPER('%' || $${params.length} || '%')`,
+        });
+      } else {
+        matches.push({ exact });
+      }
     }
 
     if (matches.length === 0) return [];
     const exactConditions = matches.map((match) => match.exact).join(' OR ');
-    const textualConditions = matches.map((match) => match.textual).join(' OR ');
+    const textualConditions = matches
+      .flatMap((match) => (match.textual ? [match.textual] : []))
+      .join(' OR ');
     const filterClauses = this.buildFilterClauses(filters, params);
     const confirmedIds = [...new Set(confirmedServiceIds ?? [])];
     if (confirmedIds.length) params.push(confirmedIds);

@@ -390,7 +390,7 @@ describe('QualificationService confirmed approximate evidence', () => {
     await service.findAtestadosComServico(['CBUQ'], undefined, [confirmedId]);
 
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain('s.id = ANY($3::uuid[])');
-    expect(params).toEqual(['cbuq', 'CBUQ', [confirmedId]]);
+    expect(sql).toContain('s.id = ANY($2::uuid[])');
+    expect(params).toEqual(['cbuq', [confirmedId]]);
   });
 });
