@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { DefaultTypeOrmRepository } from '../../../../common/repository/default-typeorm.repository';
+import { normalizeServiceSearchKey } from '../../../../common/utils/service-search-key.util';
 import { ServicoExecutado } from '../entity/servico-executado.entity';
 
 export interface ServicoExecutadoRow {
@@ -15,6 +16,7 @@ export interface ServicoExecutadoRow {
   unitId?: string;
   unitSymbolRaw?: string;
   normalizedServiceKey?: string;
+  searchServiceKey?: string;
   itemKey?: string;
   quantidadeRaw?: string;
   extractionMethod?: string;
@@ -31,6 +33,7 @@ export interface ManualServicoInput {
   unitId?: string;
   unitSymbolRaw?: string;
   normalizedServiceKey?: string;
+  searchServiceKey?: string;
   quantidade?: number;
 }
 
@@ -100,14 +103,14 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
   }
 
   async createManual(atestadoId: string, input: ManualServicoInput): Promise<ServicoExecutado> {
-    const entity = this.create({ atestadoId, ...input, itemKey: `manual::${randomUUID()}`, quantidadeRaw: input.quantidade === undefined ? undefined : String(input.quantidade), extractionMethod: 'MANUAL', manualOverride: true, baixaConfianca: false });
+    const entity = this.create({ atestadoId, ...input, searchServiceKey: input.searchServiceKey ?? normalizeServiceSearchKey(input.descricao), itemKey: `manual::${randomUUID()}`, quantidadeRaw: input.quantidade === undefined ? undefined : String(input.quantidade), extractionMethod: 'MANUAL', manualOverride: true, baixaConfianca: false });
     return (await this.save(entity)) as ServicoExecutado;
   }
 
   async updateManual(atestadoId: string, id: string, input: ManualServicoInput): Promise<ServicoExecutado | null> {
     const service = await this.findOne({ where: { id, atestadoId } });
     if (!service) return null;
-    Object.assign(service, { ...input, quantidadeRaw: input.quantidade === undefined ? undefined : String(input.quantidade), extractionMethod: 'MANUAL', manualOverride: true, baixaConfianca: false });
+    Object.assign(service, { ...input, searchServiceKey: input.searchServiceKey ?? normalizeServiceSearchKey(input.descricao), quantidadeRaw: input.quantidade === undefined ? undefined : String(input.quantidade), extractionMethod: 'MANUAL', manualOverride: true, baixaConfianca: false });
     return (await this.save(service)) as ServicoExecutado;
   }
 
@@ -119,9 +122,12 @@ export class ServicoExecutadoRepository extends DefaultTypeOrmRepository<Servico
     await this.createQueryBuilder('s')
       .insert()
       .into(ServicoExecutado)
-      .values(automaticRows as any[])
+      .values(automaticRows.map((row) => ({
+        ...row,
+        searchServiceKey: row.searchServiceKey ?? normalizeServiceSearchKey(row.descricao),
+      })) as any[])
       .orUpdate(
-        ['descricao', 'unidade', 'unit_id', 'unit_symbol_raw', 'normalized_service_key', 'quantidade', 'quantidade_raw', 'categoria', 'obra_id', 'extraction_method', 'extraction_version', 'baixa_confianca'],
+        ['descricao', 'unidade', 'unit_id', 'unit_symbol_raw', 'normalized_service_key', 'search_service_key', 'quantidade', 'quantidade_raw', 'categoria', 'obra_id', 'extraction_method', 'extraction_version', 'baixa_confianca'],
         ['atestado_id', 'item_key'],
       )
       .execute();

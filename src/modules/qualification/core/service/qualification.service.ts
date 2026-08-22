@@ -17,6 +17,7 @@ import {
   ServiceRequirement,
   ServicoBuscado,
 } from '../../public-api/interface/qualification-api.interface';
+import { normalizeServiceSearchKey } from '../../../../common/utils/service-search-key.util';
 
 interface QualificationSourceRow {
   atestadoId: string;
@@ -131,7 +132,8 @@ export class QualificationService {
 
   async resolveDescricoes(query: string): Promise<ResolvedDescricao[]> {
     const normalizedQuery = this.normalizeSearchText(query);
-    if (!normalizedQuery) return [];
+    const searchKey = normalizeServiceSearchKey(query);
+    if (!normalizedQuery || !searchKey) return [];
     const ilikePat = `%${query.trim()}%`;
     try {
       const rows = await this.dataSource.query<
@@ -146,14 +148,15 @@ export class QualificationService {
              ORDER BY COUNT(*) DESC, s2.unidade
              LIMIT 1) AS "unidadeSugerida",
            array_agg(s.id) AS "serviceIds",
-           CASE WHEN s.normalized_service_key = $3 THEN 'EXACT' ELSE 'TEXTUAL' END AS "matchKind"
+           CASE WHEN s.normalized_service_key = $4 OR s.search_service_key = $3 THEN 'EXACT' ELSE 'TEXTUAL' END AS "matchKind"
          FROM servicos_executados s
          WHERE s.descricao_tsv @@ plainto_tsquery('portuguese', $1)
             OR UPPER(s.descricao) LIKE UPPER($2)
-         GROUP BY s.descricao, s.normalized_service_key, s.descricao_tsv
-         ORDER BY CASE WHEN s.normalized_service_key = $3 THEN 0 ELSE 1 END, score DESC
+            OR s.search_service_key LIKE '%' || $3 || '%'
+         GROUP BY s.descricao, s.normalized_service_key, s.search_service_key, s.descricao_tsv
+         ORDER BY CASE WHEN s.normalized_service_key = $4 OR s.search_service_key = $3 THEN 0 ELSE 1 END, score DESC
          LIMIT 30`,
-        [query.trim(), ilikePat, normalizedQuery.replaceAll(' ', '-')],
+        [query.trim(), ilikePat, searchKey, normalizedQuery.replaceAll(' ', '-')],
       );
       const lexical = rows.map((r) => ({
         descricao: r.descricao,
@@ -175,12 +178,13 @@ export class QualificationService {
              WHERE s2.descricao = s.descricao AND s2.unidade IS NOT NULL
              GROUP BY s2.unidade ORDER BY COUNT(*) DESC, s2.unidade LIMIT 1) AS "unidadeSugerida",
            array_agg(s.id) AS "serviceIds",
-           CASE WHEN s.normalized_service_key = $2 THEN 'EXACT' ELSE 'TEXTUAL' END AS "matchKind"
+           CASE WHEN s.normalized_service_key = $3 OR s.search_service_key = $2 THEN 'EXACT' ELSE 'TEXTUAL' END AS "matchKind"
          FROM servicos_executados s WHERE UPPER(s.descricao) LIKE UPPER($1)
-         GROUP BY s.descricao, s.normalized_service_key
-         ORDER BY CASE WHEN s.normalized_service_key = $2 THEN 0 ELSE 1 END
+            OR s.search_service_key LIKE '%' || $2 || '%'
+         GROUP BY s.descricao, s.normalized_service_key, s.search_service_key
+         ORDER BY CASE WHEN s.normalized_service_key = $3 OR s.search_service_key = $2 THEN 0 ELSE 1 END
          LIMIT 30`,
-        [ilikePat, normalizedQuery.replaceAll(' ', '-')],
+        [ilikePat, searchKey, normalizedQuery.replaceAll(' ', '-')],
       );
       return this.mergeSemanticSuggestions(query, rows.map((r) => ({
         descricao: r.descricao,
@@ -1307,8 +1311,9 @@ export class QualificationService {
     const matches: Array<{ exact: string; textual?: string }> = [];
     for (const descricao of descricoes) {
       const normalizedQuery = this.normalizeSearchText(descricao);
+      const searchKey = normalizeServiceSearchKey(descricao);
       const terms = this.getRelevantSearchTerms(normalizedQuery);
-      if (!normalizedQuery || terms.length === 0) continue;
+      if (!normalizedQuery || !searchKey || terms.length === 0) continue;
 
       // This key is populated during extraction and has a dedicated index.
       // It avoids recalculating the normalization expression for every row.
@@ -1316,9 +1321,11 @@ export class QualificationService {
       const exact = `s.normalized_service_key = $${params.length}`;
       if (matchMode === 'CONTAINS' && !(confirmedServiceIds?.length)) {
         params.push(descricao.trim());
+        const rawDescriptionParam = params.length;
+        params.push(searchKey);
         matches.push({
           exact,
-          textual: `UPPER(s.descricao) LIKE UPPER('%' || $${params.length} || '%')`,
+          textual: `(UPPER(s.descricao) LIKE UPPER('%' || $${rawDescriptionParam} || '%') OR s.search_service_key LIKE '%' || $${params.length} || '%')`,
         });
       } else {
         matches.push({ exact });

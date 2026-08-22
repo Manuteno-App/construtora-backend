@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { ServicoItem } from '../../../ingestion/core/service/table-extractor.service';
 import { MeasurementsService } from '../../../measurements/core/service/measurements.service';
 import { parseNumeroBR } from '../../../../common/utils/numero-br.util';
+import { normalizeServiceSearchKey } from '../../../../common/utils/service-search-key.util';
 import { EmpresaTipo } from '../../persistence/entity/empresa.entity';
 import { ContratoRepository } from '../../persistence/repository/contrato.repository';
 import { EmpresaRepository } from '../../persistence/repository/empresa.repository';
@@ -197,6 +198,7 @@ export class EntityOrchestrationService {
           unitId: resolvedUnit.unitId,
           unitSymbolRaw: service.unidade,
           normalizedServiceKey: this.measurements.normalizeServiceKey(service.descricao),
+          searchServiceKey: normalizeServiceSearchKey(service.descricao),
           itemKey,
           quantidadeRaw: rawQuantity,
           quantidade: quantity,

@@ -57,6 +57,9 @@ export class ServicoExecutado {
   @Column({ name: 'normalized_service_key', nullable: true })
   normalizedServiceKey?: string;
 
+  @Column({ name: 'search_service_key', nullable: true, length: 255 })
+  searchServiceKey?: string;
+
   @Column({ name: 'item_key', nullable: true, length: 512 })
   itemKey?: string;
 

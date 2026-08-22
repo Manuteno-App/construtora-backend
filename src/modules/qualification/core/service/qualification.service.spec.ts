@@ -372,9 +372,9 @@ describe('QualificationService extension filter', () => {
     });
 
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain('o.extensao_km = $3');
+    expect(sql).toContain('o.extensao_km = $4');
     expect(sql).not.toContain('o.extensao_km >=');
-    expect(params).toEqual(['rocada-manual', 'Roçada Manual', 42]);
+    expect(params).toEqual(['rocada-manual', 'Roçada Manual', 'rocadamanual', 42]);
   });
 });
 

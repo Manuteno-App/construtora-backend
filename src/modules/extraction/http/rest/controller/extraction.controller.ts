@@ -5,6 +5,7 @@ import { MeasurementsService } from '../../../../measurements/core/service/measu
 import { ServicoExecutadoRepository } from '../../../persistence/repository/servico-executado.repository';
 import { UpsertServicoExecutadoDto } from '../dto/servico-executado.dto';
 import { ServiceSemanticIndexService } from '../../../../qualification/core/service/service-semantic-index.service';
+import { normalizeServiceSearchKey } from '../../../../../common/utils/service-search-key.util';
 
 @ApiTags('extraction')
 @Controller('extraction')
@@ -74,6 +75,7 @@ export class AtestadoServicosController {
       unitId: resolved.unitId,
       unitSymbolRaw: unidade,
       normalizedServiceKey: this.measurements.normalizeServiceKey(body.descricao),
+      searchServiceKey: normalizeServiceSearchKey(body.descricao),
       quantidade: body.quantidade,
     };
   }
