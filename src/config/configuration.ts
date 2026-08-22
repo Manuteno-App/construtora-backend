@@ -31,6 +31,10 @@ export const configurationSchema = Joi.object({
   JWT_REFRESH_SECRET: Joi.string().required(),
   JWT_ACCESS_EXPIRATION: Joi.string().default('15m'),
   JWT_REFRESH_EXPIRATION: Joi.string().default('7d'),
+  // API que continua sendo a autoridade dos tokens opacos emitidos pelo
+  // Portal Manuteno. Opcional para não impedir o uso isolado da Construtora;
+  // tokens externos são recusados enquanto ela não estiver configurada.
+  MANUTENO_API_BASE_URL: Joi.string().uri().optional(),
 
   ADMIN_EMAIL: Joi.string().email().required(),
   ADMIN_PASSWORD: Joi.string().min(8).required(),
@@ -78,6 +82,8 @@ export const configuration = () => ({
     accessExpiration: process.env.JWT_ACCESS_EXPIRATION ?? '15m',
     refreshExpiration: process.env.JWT_REFRESH_EXPIRATION ?? '7d',
   },
+
+  manutenoApiBaseUrl: process.env.MANUTENO_API_BASE_URL?.replace(/\/$/, ''),
 
   admin: {
     email: process.env.ADMIN_EMAIL,

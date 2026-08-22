@@ -31,6 +31,14 @@
 $ npm install
 ```
 
+## Portal Manuteno
+
+Para aceitar as chamadas autenticadas do Portal, configure `MANUTENO_API_BASE_URL`
+com a base da API Manuteno (sem barra final). A API valida o token opaco em
+`GET /users/me` e só autoriza administradores. Para CORS, use `FRONTEND_URLS`
+com as origens separadas por vírgula, mantendo também a origem atual da
+Construtora.
+
 ## Compile and run the project
 
 ```bash
