@@ -17,6 +17,6 @@ import { UserRepository } from './persistence/repository/user.repository';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, LocalStrategy, UserRepository],
-  exports: [AuthService, UserRepository],
+  exports: [AuthService, UserRepository, JwtModule],
 })
 export class AuthModule {}

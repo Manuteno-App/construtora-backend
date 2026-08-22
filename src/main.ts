@@ -41,7 +41,10 @@ async function bootstrap() {
     .map((origin) => origin.trim())
     .filter(Boolean);
   app.enableCors({
-    origin: allowedOrigins,
+    // Com credentials, `Access-Control-Allow-Origin: *` é inválido no
+    // navegador. `true` reflete a origem da requisição e efetivamente libera
+    // qualquer frontend sem quebrar chamadas que usem credenciais.
+    origin: process.env.CORS_ALLOW_ALL_ORIGINS === 'true' ? true : allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,

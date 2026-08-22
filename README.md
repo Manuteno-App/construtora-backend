@@ -39,6 +39,10 @@ com a base da API Manuteno (sem barra final). A API valida o token opaco em
 com as origens separadas por vírgula, mantendo também a origem atual da
 Construtora.
 
+Em ambientes temporários, `CORS_ALLOW_ALL_ORIGINS=true` faz a API refletir
+qualquer `Origin`. Não use `*` com `credentials: true`, pois navegadores
+recusam essa combinação.
+
 ## Compile and run the project
 
 ```bash
