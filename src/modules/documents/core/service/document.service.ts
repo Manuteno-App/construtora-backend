@@ -4,13 +4,26 @@ import { DataSource } from 'typeorm';
 import { NotFoundDomainException } from '../../../../common/exception/not-found-domain.exception';
 import { StorageService } from '../../../infrastructure/storage/storage.service';
 import { Chunk } from '../../../ingestion/persistence/entity/chunk.entity';
-import { Atestado, AtestadoCategoria, AtestadoStatus } from '../../persistence/entity/atestado.entity';
+import {
+  Atestado,
+  AtestadoCategoria,
+  AtestadoStatus,
+} from '../../persistence/entity/atestado.entity';
 import { AtestadoRepository } from '../../persistence/repository/atestado.repository';
 
-export const categoryFromFilename = (filename: string): AtestadoCategoria | undefined => {
-  const code = filename.trim().match(/^(ST|EST|CIV|SAN|INS)(?:\s*-|\s+|_|\.|$)/i)?.[1]?.toUpperCase();
+export const categoryFromFilename = (
+  filename: string,
+): AtestadoCategoria | undefined => {
+  // Category codes can occur after a descriptive prefix (for example,
+  // "Atestado EST - Rodovia.pdf"). Require separators on both sides so that
+  // ordinary words such as "atestado" are not classified as EST.
+  const code = filename
+    .match(/(?:^|[\s_.-])(ST|EST|CIV|SAN|INS)(?=\s|-|_|\.|$)/i)?.[1]
+    ?.toUpperCase();
   if (code === 'ST') return AtestadoCategoria.EST;
-  return code && code in AtestadoCategoria ? code as AtestadoCategoria : undefined;
+  return code && code in AtestadoCategoria
+    ? (code as AtestadoCategoria)
+    : undefined;
 };
 
 export interface ListAtestadosParams {
@@ -29,7 +42,10 @@ export class DocumentService {
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
-  async createAtestado(params: { s3Key: string; originalFilename: string }): Promise<Atestado> {
+  async createAtestado(params: {
+    s3Key: string;
+    originalFilename: string;
+  }): Promise<Atestado> {
     return this.atestadoRepo.createAndSave({
       ...params,
       categoria: categoryFromFilename(params.originalFilename),
@@ -48,7 +64,9 @@ export class DocumentService {
     return atestado;
   }
 
-  async listAtestados(params: ListAtestadosParams): Promise<{ items: Atestado[]; total: number }> {
+  async listAtestados(
+    params: ListAtestadosParams,
+  ): Promise<{ items: Atestado[]; total: number }> {
     const [items, total] = await this.atestadoRepo.findPaginated(
       params.status,
       params.page,
@@ -72,14 +90,19 @@ export class DocumentService {
   }
 
   async rename(id: string, originalFilename: string): Promise<Atestado> {
-    const baseName = originalFilename.trim().replace(/\.pdf$/i, '').trim();
+    const baseName = originalFilename
+      .trim()
+      .replace(/\.pdf$/i, '')
+      .trim();
     if (!baseName) {
       throw new BadRequestException('Informe um nome de arquivo válido');
     }
 
     const normalizedFilename = `${baseName}.pdf`;
     if (normalizedFilename.length > 255) {
-      throw new BadRequestException('O nome do arquivo deve ter no máximo 255 caracteres');
+      throw new BadRequestException(
+        'O nome do arquivo deve ter no máximo 255 caracteres',
+      );
     }
 
     return this.dataSource.transaction(async (manager) => {
@@ -87,8 +110,16 @@ export class DocumentService {
       if (!atestado) throw new NotFoundDomainException('Atestado', id);
 
       const categoria = categoryFromFilename(normalizedFilename) ?? null;
-      await manager.update(Atestado, { id }, { originalFilename: normalizedFilename, categoria });
-      await manager.update(Chunk, { atestadoId: id }, { originalFilename: normalizedFilename });
+      await manager.update(
+        Atestado,
+        { id },
+        { originalFilename: normalizedFilename, categoria },
+      );
+      await manager.update(
+        Chunk,
+        { atestadoId: id },
+        { originalFilename: normalizedFilename },
+      );
 
       return { ...atestado, originalFilename: normalizedFilename, categoria };
     });

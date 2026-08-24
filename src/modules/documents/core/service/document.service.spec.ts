@@ -9,7 +9,10 @@ describe('categoryFromFilename', () => {
     ['EST_001_rodovia.pdf', AtestadoCategoria.EST],
     [' est - rodovia.pdf', AtestadoCategoria.EST],
     ['CIV - edificio.pdf', AtestadoCategoria.CIV],
-    ['arquivo EST.pdf', undefined],
+    ['arquivo EST.pdf', AtestadoCategoria.EST],
+    ['atestado-EST-rodovia.pdf', AtestadoCategoria.EST],
+    ['atestado ESTADUAL.pdf', undefined],
+    ['atestado.pdf', undefined],
   ])('classifies %s as %s', (filename, expected) => {
     expect(categoryFromFilename(filename)).toBe(expected);
   });
