@@ -20,8 +20,8 @@ export interface ExtractedEntities {
     dataInicio?: string;
     dataFim?: string;
     dataAtestado?: string;
-    valor?: number;
-    valorAtestado?: number;
+    valor?: number | string;
+    valorAtestado?: number | string;
     cliente?: string;
     engenheiro?: string;
     art?: string;
@@ -31,7 +31,7 @@ export interface ExtractedEntities {
     kmFinal?: number;
   };
   empresas?: Array<{ nome: string; cnpj?: string; tipo?: string }>;
-  contrato?: { numero?: string; data?: string; valor?: number };
+  contrato?: { numero?: string; data?: string; valor?: number | string };
 }
 
 @Injectable()
@@ -88,6 +88,19 @@ export class EntityOrchestrationService {
       : undefined;
   }
 
+  /** Converts values such as "R$ 1.234,56" returned by OCR/LLM into a number. */
+  private normalizeMonetaryValue(value?: number | string): number | undefined {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    if (!value || /^(?:null|undefined)$/i.test(value.trim())) return undefined;
+
+    const numeric = value
+      .trim()
+      .replace(/^R\$\s*/i, '')
+      .replace(/\s*(?:reais|r\$)\s*$/i, '')
+      .trim();
+    return parseNumeroBR(numeric);
+  }
+
   async persistExtractedEntities(
     entities: ExtractedEntities,
     atestadoId: string,
@@ -113,8 +126,8 @@ export class EntityOrchestrationService {
         dataInicio: this.parseDate(entities.obra.dataInicio),
         dataFim: this.parseDate(entities.obra.dataFim),
         dataAtestado: this.parseDate(entities.obra.dataAtestado),
-        valor: entities.obra.valor,
-        valorAtestado: entities.obra.valorAtestado,
+        valor: this.normalizeMonetaryValue(entities.obra.valor),
+        valorAtestado: this.normalizeMonetaryValue(entities.obra.valorAtestado),
         cliente: entities.obra.cliente,
         engenheiro: entities.obra.engenheiro,
         art: entities.obra.art,
@@ -148,7 +161,7 @@ export class EntityOrchestrationService {
             empresaId: contractEmpresaId,
             numero: entities.contrato.numero,
             data: this.parseDate(entities.contrato.data),
-            valor: entities.contrato.valor,
+            valor: this.normalizeMonetaryValue(entities.contrato.valor),
           });
         }
       }

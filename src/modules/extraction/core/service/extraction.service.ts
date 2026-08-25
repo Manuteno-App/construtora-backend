@@ -64,6 +64,8 @@ export class ExtractionService {
         cliente: entities.obra?.cliente || kv['contratante'],
         engenheiro: entities.obra?.engenheiro || kv['engenheiro'],
         numeroAtestado: entities.obra?.numeroAtestado || kv['numero_atestado'],
+        valor: entities.obra?.valor ?? kv['valor_obra'],
+        valorAtestado: entities.obra?.valorAtestado ?? kv['valor_atestado'],
         extensaoDeclaradaKm: entities.obra?.extensaoDeclaradaKm,
         kmInicial: entities.obra?.kmInicial,
         kmFinal: entities.obra?.kmFinal,
